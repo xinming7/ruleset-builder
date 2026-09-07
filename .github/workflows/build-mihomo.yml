@@ -41,7 +41,7 @@ jobs:
             for fname in ${{ github.event.inputs.files }}; do
               for beh in domain ipcidr classical; do
                 if [ -f "mihomo/$beh/$fname" ]; then
-                  BEHAVIORS=$(echo "$BEHAVIORS" | jq --arg b "$beh" '. + [$b] | unique')
+                  BEHAVIORS=$(echo "$BEHAVIORS" | jq -c --arg b "$beh" '. + [$b] | unique')
                 fi
               done
             done
@@ -55,7 +55,7 @@ jobs:
             CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'mihomo/' 2>/dev/null || git diff --name-only HEAD -- 'mihomo/')
             for beh in domain ipcidr classical; do
               if echo "$CHANGED" | grep -q "^mihomo/$beh/"; then
-                BEHAVIORS=$(echo "$BEHAVIORS" | jq --arg b "$beh" '. + [$b] | unique')
+                BEHAVIORS=$(echo "$BEHAVIORS" | jq -c --arg b "$beh" '. + [$b] | unique')
               fi
             done
             if [ "$BEHAVIORS" != "[]" ]; then
