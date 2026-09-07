@@ -1,7 +1,0 @@
-payload:
-  # classical 类型 - 完整 mihomo 规则语法（不含目标）
-  - DOMAIN-SUFFIX,ads.example.com
-  - DOMAIN-SUFFIX,tracker.example.com
-  - DOMAIN-KEYWORD,adserver
-  - DOMAIN-KEYWORD,analytics
-  # 按需添加更多规则
