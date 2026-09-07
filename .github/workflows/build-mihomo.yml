@@ -171,6 +171,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b rules
           git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          # 复制 README.md 到 rules 分支
+          cp "${{ github.workspace }}/rules-README.md" README.md
+          git add README.md
+          git commit -m "chore: init rules branch with README [skip ci]"
 
       - name: Push to rules branch
         run: |
