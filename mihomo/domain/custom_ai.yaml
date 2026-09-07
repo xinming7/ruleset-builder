@@ -1,0 +1,9 @@
+behavior: domain
+payload:
+  - '*.copilot.microsoft.com'
+  - '*.api.microsoftapp.net'
+  - '*.copilot.azure.com'
+  - '*.openai.azure.com'
+  - 'edgeservices.bing.com'
+  - 'sydney.bing.com'
+  - 'img.bing.com'
