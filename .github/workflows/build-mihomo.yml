@@ -146,10 +146,10 @@ jobs:
             name=$(basename "$f" | sed 's/\.\(yaml\|txt\)$//')
             echo "Converting $f -> output/${name}.mrs"
             # convert-ruleset 第三个参数必须是目录，为每个文件创建临时目录
-            TMPDIR=$(mktemp -d)
-            cp "$f" "$TMPDIR/"
-            ./mihomo convert-ruleset ${{ matrix.behavior }} yaml "$TMPDIR" "output/${name}.mrs"
-            rm -rf "$TMPDIR"
+            WORK_TMPDIR=$(mktemp -d)
+            cp "$f" "$WORK_TMPDIR/"
+            ./mihomo convert-ruleset ${{ matrix.behavior }} yaml "$WORK_TMPDIR" "output/${name}.mrs"
+            rm -rf "$WORK_TMPDIR"
           done
 
       - name: Upload artifacts
