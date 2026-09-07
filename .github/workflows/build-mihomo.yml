@@ -10,9 +10,6 @@ on:
 permissions:
   contents: write
 
-env:
-  MIHOMO_VERSION: "v1.19.8"
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -34,9 +31,29 @@ jobs:
       - name: Download mihomo
         if: steps.check.outputs.has_files == 'true'
         run: |
-          curl -sL "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/mihomo-linux-amd64-${MIHOMO_VERSION}.gz" -o mihomo.gz
-          gunzip mihomo.gz
+          # 通过 GitHub API 获取最新 release 的 linux-amd64 下载链接
+          ASSET_URL=$(curl -sL "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" \
+            | grep -o '"browser_download_url": *"[^"]*linux-amd64[^"]*"' \
+            | head -1 \
+            | sed 's/"browser_download_url": *"//;s/"$//')
+          if [ -z "$ASSET_URL" ]; then
+            echo "ERROR: 无法获取 mihomo 下载链接"
+            exit 1
+          fi
+          echo "Downloading: $ASSET_URL"
+          curl -sL "$ASSET_URL" -o mihomo-dl
+          # 处理可能的压缩格式
+          if file mihomo-dl | grep -q gzip; then
+            mv mihomo-dl mihomo.gz && gunzip mihomo.gz
+          elif file mihomo-dl | grep -q "XZ\|xz"; then
+            mv mihomo-dl mihomo.xz && unxz mihomo.xz
+          elif file mihomo-dl | grep -q Zip; then
+            unzip mihomo-dl
+          else
+            mv mihomo-dl mihomo
+          fi
           chmod +x mihomo
+          ./mihomo -v
 
       - name: Build ${{ matrix.behavior }} rulesets
         if: steps.check.outputs.has_files == 'true'

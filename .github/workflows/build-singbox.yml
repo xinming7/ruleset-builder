@@ -10,9 +10,6 @@ on:
 permissions:
   contents: write
 
-env:
-  SINGBOX_VERSION: "1.11.4"
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -31,10 +28,22 @@ jobs:
       - name: Download sing-box
         if: steps.check.outputs.has_files == 'true'
         run: |
-          curl -sL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz" -o sing-box.tar.gz
+          # 通过 GitHub API 获取最新 release 的 linux-amd64 下载链接
+          ASSET_URL=$(curl -sL "https://api.github.com/repos/SagerNet/sing-box/releases/latest" \
+            | grep -o '"browser_download_url": *"[^"]*linux-amd64[^"]*\.tar\.gz"' \
+            | head -1 \
+            | sed 's/"browser_download_url": *"//;s/"$//')
+          if [ -z "$ASSET_URL" ]; then
+            echo "ERROR: 无法获取 sing-box 下载链接"
+            exit 1
+          fi
+          echo "Downloading: $ASSET_URL"
+          curl -sL "$ASSET_URL" -o sing-box.tar.gz
           tar xzf sing-box.tar.gz
-          mv sing-box-${SINGBOX_VERSION}-linux-amd64/sing-box .
+          # 解压后的目录名不确定，找到 sing-box 二进制即可
+          find . -name "sing-box" -type f -not -path "./sing-box*" | head -1 | xargs -I{} cp {} ./sing-box
           chmod +x sing-box
+          ./sing-box version
 
       - name: Compile rule-sets
         if: steps.check.outputs.has_files == 'true'
