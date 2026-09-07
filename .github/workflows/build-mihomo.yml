@@ -16,6 +16,11 @@ on:
           - ""
           - domain
           - ipcidr
+      build_all:
+        description: "强制打包所有文件（忽略变更检测）"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -37,7 +42,15 @@ jobs:
           BEHAVIORS="[]"
           HAS_CHANGES="false"
 
-          if [ -n "${{ github.event.inputs.behavior }}" ]; then
+          if [ "${{ github.event.inputs.build_all }}" = "true" ]; then
+            # 强制打包所有 behavior
+            if [ -n "${{ github.event.inputs.behavior }}" ]; then
+              BEHAVIORS='["${{ github.event.inputs.behavior }}"]'
+            else
+              BEHAVIORS='["domain","ipcidr"]'
+            fi
+            HAS_CHANGES="true"
+          elif [ -n "${{ github.event.inputs.behavior }}" ]; then
             BEHAVIORS='["${{ github.event.inputs.behavior }}"]'
             HAS_CHANGES="true"
           else
