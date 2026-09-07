@@ -1,0 +1,17 @@
+payload:
+  - DOMAIN,proxy.api.030101.xyz
+  - DOMAIN,bilibili.zp0.top
+  - DOMAIN,resolve-dl.cloud.blackmagicdesign.com
+  - DOMAIN,updates.cdn-apple.com
+  - DOMAIN,ccmdls.adobe.com
+  - DOMAIN,s1.4dv.ai
+  - DOMAIN,bot.lsposed.org
+  - DOMAIN,pool.ntp.org
+  - DOMAIN-SUFFIX,ghfast.top
+  - DOMAIN-SUFFIX,gh-proxy.org
+  - DOMAIN-SUFFIX,decrypt.day
+  - DOMAIN-SUFFIX,xiaomi.net
+  - DOMAIN-SUFFIX,xiaomi.com
+  - DOMAIN-SUFFIX,macked.app
+  - DOMAIN-SUFFIX,time.is
+  - DOMAIN-SUFFIX,cloudflare.com
