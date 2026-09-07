@@ -115,14 +115,23 @@ jobs:
           fi
           echo "Downloading: $ASSET_URL"
           curl -sL "$ASSET_URL" -o mihomo-dl
+          # 列出下载文件信息方便排查
+          file mihomo-dl
           if file mihomo-dl | grep -q gzip; then
             mv mihomo-dl mihomo.gz && gunzip mihomo.gz
           elif file mihomo-dl | grep -q "XZ\|xz"; then
             mv mihomo-dl mihomo.xz && unxz mihomo.xz
           elif file mihomo-dl | grep -q Zip; then
-            unzip mihomo-dl
+            unzip -o mihomo-dl
           else
             mv mihomo-dl mihomo
+          fi
+          # 如果解压出了目录，找到里面的二进制
+          if [ ! -x mihomo ] || file mihomo | grep -q directory; then
+            MIBIN=$(find . -path ./mihomo-dl -prune -o -name "mihomo" -type f -print 2>/dev/null | head -1)
+            if [ -n "$MIBIN" ]; then
+              cp "$MIBIN" ./mihomo
+            fi
           fi
           chmod +x mihomo
           ./mihomo -v

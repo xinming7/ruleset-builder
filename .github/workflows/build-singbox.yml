@@ -63,7 +63,16 @@ jobs:
           echo "Downloading: $ASSET_URL"
           curl -sL "$ASSET_URL" -o sing-box.tar.gz
           tar xzf sing-box.tar.gz
-          find . -name "sing-box" -type f -not -path "./sing-box*" | head -1 | xargs -I{} cp {} ./sing-box
+          # 列出解压内容方便排查
+          echo "=== 解压内容 ==="
+          find . -path ./sing-box.tar.gz -prune -o -type f -print
+          # 找到 sing-box 二进制并复制到当前目录
+          SINGBOX_BIN=$(find . -path ./sing-box.tar.gz -prune -o -name "sing-box" -type f -print | head -1)
+          if [ -z "$SINGBOX_BIN" ]; then
+            echo "ERROR: 未找到 sing-box 二进制文件"
+            exit 1
+          fi
+          cp "$SINGBOX_BIN" ./sing-box
           chmod +x sing-box
           ./sing-box version
 
