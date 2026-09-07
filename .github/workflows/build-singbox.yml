@@ -62,17 +62,18 @@ jobs:
           fi
           echo "Downloading: $ASSET_URL"
           curl -sL "$ASSET_URL" -o sing-box.tar.gz
-          tar xzf sing-box.tar.gz
-          # 列出解压内容方便排查
-          echo "=== 解压内容 ==="
-          find . -path ./sing-box.tar.gz -prune -o -type f -print
-          # 找到 sing-box 二进制并复制到当前目录
-          SINGBOX_BIN=$(find . -path ./sing-box.tar.gz -prune -o -name "sing-box" -type f -print | head -1)
+          mkdir -p sing-box-extract
+          tar xzf sing-box.tar.gz -C sing-box-extract --strip-components=0
+          # 在解压目录中查找二进制
+          SINGBOX_BIN=$(find sing-box-extract -name "sing-box" -type f | head -1)
           if [ -z "$SINGBOX_BIN" ]; then
             echo "ERROR: 未找到 sing-box 二进制文件"
+            echo "=== 解压内容 ==="
+            find sing-box-extract -type f
             exit 1
           fi
           cp "$SINGBOX_BIN" ./sing-box
+          rm -rf sing-box-extract
           chmod +x sing-box
           ./sing-box version
 
@@ -97,7 +98,11 @@ jobs:
         if: steps.files.outputs.has_files == 'true'
         run: |
           mkdir -p output/singbox
-          mv output/*.srs output/singbox/ 2>/dev/null || true
+          if ! ls output/*.srs 2>/dev/null | head -1 > /dev/null; then
+            echo "ERROR: 编译未产出任何 .srs 文件"
+            exit 1
+          fi
+          mv output/*.srs output/singbox/
           if ls output/singbox/*.srs 2>/dev/null | head -1 > /dev/null; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"

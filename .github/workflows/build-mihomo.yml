@@ -119,7 +119,7 @@ jobs:
       - name: Commit compiled rulesets
         run: |
           mkdir -p output/mihomo
-          cp artifacts/**/*.mrs output/mihomo/ 2>/dev/null || true
+          find artifacts -name "*.mrs" -exec cp {} output/mihomo/ \;
           if ls output/mihomo/*.mrs 2>/dev/null | head -1 > /dev/null; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
