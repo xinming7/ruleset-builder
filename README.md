@@ -1,6 +1,9 @@
 # Ruleset Builder
 
-自动构建 mihomo (.mrs) 和 sing-box (.srs) 规则集。当源文件发生变更时，GitHub Actions 自动编译并提交产物。
+[![Build mihomo Ruleset](https://github.com/xinming7/ruleset-builder/actions/workflows/build-mihomo.yml/badge.svg)](https://github.com/xinming7/ruleset-builder/actions/workflows/build-mihomo.yml)
+[![Build sing-box Ruleset](https://github.com/xinming7/ruleset-builder/actions/workflows/build-singbox.yml/badge.svg)](https://github.com/xinming7/ruleset-builder/actions/workflows/build-singbox.yml)
+
+自动构建 mihomo (.mrs) 和 sing-box (.srs) 规则集。当源文件发生变更时，GitHub Actions 自动编译并将产物发布到 `rules` 分支。
 
 ## 目录结构
 
@@ -8,12 +11,11 @@
 ├── mihomo/
 │   ├── domain/       # 域名规则 (.yaml/.txt) → .mrs
 │   └── ipcidr/       # IP-CIDR 规则 (.yaml/.txt) → .mrs
-├── singbox/
-│   └── rules/        # sing-box 规则 (.json) → .srs
-└── output/           # CI 编译产物（自动生成）
-    ├── mihomo/       # *.mrs 文件
-    └── singbox/      # *.srs 文件
+└── singbox/
+    └── rules/        # sing-box 规则 (.json) → .srs
 ```
+
+产物存放在 `rules` 分支，与源码完全隔离，本地 push 不会影响产物。
 
 ## 使用方法
 
@@ -65,13 +67,14 @@ git push
 
 GitHub Actions 会自动：
 - 检测变更的文件
+- 校验文件格式（YAML/JSON 语法）
 - 下载对应工具链（自动获取最新版本）
 - 编译生成 `.mrs` / `.srs`
-- 将产物提交到 `output/` 目录
+- 将产物推送到 `rules` 分支
 
 ### 4. 引用规则集
 
-编译完成后，通过 raw URL 引用：
+通过 `rules` 分支的 raw URL 引用：
 
 **mihomo 配置**:
 ```yaml
@@ -80,7 +83,7 @@ rule-providers:
     type: http
     behavior: domain
     format: mrs
-    url: https://raw.githubusercontent.com/<你的用户名>/ruleset-builder/main/output/mihomo/direct.mrs
+    url: https://raw.githubusercontent.com/xinming7/ruleset-builder/rules/mihomo/direct.mrs
     interval: 86400
     path: ./ruleset/direct.mrs
 
@@ -97,7 +100,7 @@ rules:
         "type": "remote",
         "tag": "direct",
         "format": "binary",
-        "url": "https://raw.githubusercontent.com/<你的用户名>/ruleset-builder/main/output/singbox/direct.srs",
+        "url": "https://raw.githubusercontent.com/xinming7/ruleset-builder/rules/singbox/direct.srs",
         "update_interval": "1d"
       }
     ]
@@ -107,7 +110,9 @@ rules:
 
 ## 手动触发
 
-在 GitHub 仓库的 Actions 页面，可以手动触发构建（workflow_dispatch），支持选择指定 behavior 类型。
+在 GitHub 仓库的 Actions 页面，可以手动触发构建（workflow_dispatch），支持：
+- 选择指定 behavior 类型（domain/ipcidr）
+- 强制打包所有文件
 
 ## 工具版本
 

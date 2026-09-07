@@ -6,6 +6,8 @@ on:
       - "mihomo/**/*.yaml"
       - "mihomo/**/*.txt"
     branches: [main]
+  schedule:
+    - cron: '0 3 * * 1'  # 每周一 UTC 03:00（北京时间 11:00）
   workflow_dispatch:
     inputs:
       behavior:
@@ -25,6 +27,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: push-to-rules
+  cancel-in-progress: false
+
 jobs:
   detect:
     runs-on: ubuntu-latest
@@ -42,8 +48,7 @@ jobs:
           BEHAVIORS="[]"
           HAS_CHANGES="false"
 
-          if [ "${{ github.event.inputs.build_all }}" = "true" ]; then
-            # 强制打包所有 behavior
+          if [ "${{ github.event.inputs.build_all }}" = "true" ] || [ "${{ github.event_name }}" = "schedule" ]; then
             if [ -n "${{ github.event.inputs.behavior }}" ]; then
               BEHAVIORS='["${{ github.event.inputs.behavior }}"]'
             else
@@ -94,6 +99,25 @@ jobs:
           chmod +x mihomo-bin
           ./mihomo-bin -v
 
+      - name: Validate yaml/txt files
+        run: |
+          pip install pyyaml -q
+          BEHAVIOR=${{ matrix.behavior }}
+          for f in mihomo/$BEHAVIOR/*.yaml mihomo/$BEHAVIOR/*.txt; do
+            [ -f "$f" ] || continue
+            echo "Validating $f ..."
+            if [[ "$f" == *.yaml ]]; then
+              python3 -c "import yaml; yaml.safe_load(open('$f'))" || { echo "ERROR: $f YAML 语法错误"; exit 1; }
+            fi
+            if [[ "$f" == *.txt ]]; then
+              if ! grep -q '[^[:space:]]' "$f"; then
+                echo "ERROR: $f 文件为空"
+                exit 1
+              fi
+            fi
+          done
+          echo "All files passed validation"
+
       - name: Build ${{ matrix.behavior }} rulesets
         run: |
           mkdir -p output
@@ -121,24 +145,30 @@ jobs:
     if: always() && needs.build.result != 'skipped'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
 
-      - name: Commit compiled rulesets
+      - name: Push to rules branch
         run: |
-          mkdir -p output/mihomo
-          find artifacts -name "*.mrs" -exec cp {} output/mihomo/ \;
-          if ls output/mihomo/*.mrs 2>/dev/null | head -1 > /dev/null; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add output/mihomo/
-            git diff --cached --quiet || git commit -m "chore: update mihomo rulesets [skip ci]"
-            git push
-          else
+          mkdir -p release/mihomo
+          find artifacts -name "*.mrs" -exec cp {} release/mihomo/ \;
+          if ! ls release/mihomo/*.mrs 2>/dev/null | head -1 > /dev/null; then
             echo "No .mrs files to commit"
+            exit 0
           fi
+
+          cd release
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b rules
+
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git fetch origin rules 2>/dev/null && git reset origin/rules 2>/dev/null || true
+
+          git add .
+          git diff --cached --quiet || git commit -m "chore: update mihomo rulesets [skip ci]"
+          git push origin rules --force

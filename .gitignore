@@ -1,6 +1,5 @@
-# 编译产物（由 CI 自动提交到 output/ 目录）
-# 如不想让 CI 自动提交，取消下面的注释
-# output/
+# 编译产物（由 CI 推送到 rules 分支，不提交到 main）
+output/
 
 # 系统文件
 .DS_Store
