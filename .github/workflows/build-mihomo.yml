@@ -117,14 +117,16 @@ jobs:
           curl -sL "$ASSET_URL" -o mihomo-dl
           # 列出下载文件信息方便排查
           file mihomo-dl
+          # 清理可能存在的旧文件，避免 gunzip/unxz 报 "already exists"
+          rm -f mihomo mihomo.gz mihomo.xz
           if file mihomo-dl | grep -q gzip; then
-            mv mihomo-dl mihomo.gz && gunzip mihomo.gz
+            mv mihomo-dl mihomo.gz && gunzip -f mihomo.gz
           elif file mihomo-dl | grep -q "XZ\|xz"; then
-            mv mihomo-dl mihomo.xz && unxz mihomo.xz
+            mv mihomo-dl mihomo.xz && unxz -f mihomo.xz
           elif file mihomo-dl | grep -q Zip; then
             unzip -o mihomo-dl
           else
-            mv mihomo-dl mihomo
+            mv -f mihomo-dl mihomo
           fi
           # 如果解压出了目录，找到里面的二进制
           if [ ! -x mihomo ] || file mihomo | grep -q directory; then
