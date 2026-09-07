@@ -7,8 +7,7 @@
 ```
 ├── mihomo/
 │   ├── domain/       # 域名规则 (.yaml/.txt) → .mrs
-│   ├── ipcidr/       # IP-CIDR 规则 (.yaml/.txt) → .mrs
-│   └── classical/    # 经典规则 (.yaml/.txt) → .mrs
+│   └── ipcidr/       # IP-CIDR 规则 (.yaml/.txt) → .mrs
 ├── singbox/
 │   └── rules/        # sing-box 规则 (.json) → .srs
 └── output/           # CI 编译产物（自动生成）
@@ -36,13 +35,8 @@ payload:
   - '192.168.0.0/16'
 ```
 
-**classical 类型** (`mihomo/classical/`):
-```yaml
-payload:
-  - DOMAIN-SUFFIX,example.com
-  - DOMAIN-KEYWORD,keyword
-  - IP-CIDR,10.0.0.0/8
-```
+> **注意**：mrs 格式仅支持 domain 和 ipcidr 两种 behavior，不支持 classical。
+> 参考：https://wiki.metacubex.one/config/rule-providers/#format
 
 ### 2. 添加 sing-box 规则
 
@@ -71,7 +65,7 @@ git push
 
 GitHub Actions 会自动：
 - 检测变更的文件
-- 下载对应工具链
+- 下载对应工具链（自动获取最新版本）
 - 编译生成 `.mrs` / `.srs`
 - 将产物提交到 `output/` 目录
 
@@ -113,9 +107,9 @@ rules:
 
 ## 手动触发
 
-在 GitHub 仓库的 Actions 页面，可以手动触发构建（workflow_dispatch）。
+在 GitHub 仓库的 Actions 页面，可以手动触发构建（workflow_dispatch），支持选择指定 behavior 类型。
 
 ## 工具版本
 
-- mihomo: v1.19.8（可在 workflow 中修改 `MIHOMO_VERSION`）
-- sing-box: 1.11.4（可在 workflow 中修改 `SINGBOX_VERSION`）
+- mihomo: 自动获取 GitHub 最新 release
+- sing-box: 自动获取 GitHub 最新 release
