@@ -96,14 +96,19 @@ jobs:
       - name: Build ${{ matrix.behavior }} rulesets
         run: |
           mkdir -p output
-          echo "Converting mihomo/${{ matrix.behavior }}/ -> output/${{ matrix.behavior }}.mrs"
-          ./mihomo-bin convert-ruleset ${{ matrix.behavior }} yaml "mihomo/${{ matrix.behavior }}/" "output/${{ matrix.behavior }}.mrs"
+          BEHAVIOR=${{ matrix.behavior }}
+          for f in mihomo/$BEHAVIOR/*.yaml mihomo/$BEHAVIOR/*.txt; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f" | sed 's/\.\(yaml\|txt\)$//')
+            echo "Converting $f -> output/${name}.mrs"
+            ./mihomo-bin convert-ruleset "$BEHAVIOR" yaml "$f" "output/${name}.mrs"
+          done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: mrs-${{ matrix.behavior }}
-          path: output/${{ matrix.behavior }}.mrs
+          path: output/*.mrs
 
   commit:
     needs: build
