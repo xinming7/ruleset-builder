@@ -1,6 +1,0 @@
-payload:
-  # 广告域名 - 拦截规则
-  - 'ads.example.com'
-  - 'tracker.example.com'
-  - 'analytics.example.com'
-  # 按需添加更多广告/追踪域名
