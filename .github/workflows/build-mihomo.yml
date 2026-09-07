@@ -142,22 +142,16 @@ jobs:
         if: steps.files.outputs.files != ''
         run: |
           mkdir -p output
-          for f in ${{ steps.files.outputs.files }}; do
-            name=$(basename "$f" | sed 's/\.\(yaml\|txt\)$//')
-            echo "Converting $f -> output/${name}.mrs"
-            # convert-ruleset 第三个参数必须是目录，为每个文件创建临时目录
-            WORK_TMPDIR=$(mktemp -d)
-            cp "$f" "$WORK_TMPDIR/"
-            ./mihomo convert-ruleset ${{ matrix.behavior }} yaml "$WORK_TMPDIR" "output/${name}.mrs"
-            rm -rf "$WORK_TMPDIR"
-          done
+          # 直接把整个行为目录传给 convert-ruleset，编译为单个 .mrs
+          echo "Converting mihomo/${{ matrix.behavior }}/ -> output/${{ matrix.behavior }}.mrs"
+          ./mihomo convert-ruleset ${{ matrix.behavior }} yaml "mihomo/${{ matrix.behavior }}" "output/${{ matrix.behavior }}.mrs"
 
       - name: Upload artifacts
         if: steps.files.outputs.files != ''
         uses: actions/upload-artifact@v4
         with:
           name: mrs-${{ matrix.behavior }}
-          path: output/*.mrs
+          path: output/${{ matrix.behavior }}.mrs
 
   commit:
     needs: build
