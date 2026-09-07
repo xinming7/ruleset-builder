@@ -6,6 +6,10 @@ on:
       - "singbox/**"
     branches: [main]
   workflow_dispatch:
+    inputs:
+      files:
+        description: "指定文件名（如 direct.json），留空则编译改动的文件"
+        required: false
 
 permissions:
   contents: write
@@ -15,20 +19,39 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Check for source files
-        id: check
+      - name: Find target files
+        id: files
         run: |
-          if ls singbox/rules/*.json 2>/dev/null | head -1 > /dev/null; then
-            echo "has_files=true" >> "$GITHUB_OUTPUT"
+          FILES=""
+          if [ -n "${{ github.event.inputs.files }}" ]; then
+            for fname in ${{ github.event.inputs.files }}; do
+              fpath="singbox/rules/$fname"
+              if [ -f "$fpath" ]; then
+                FILES="$FILES $fpath"
+              fi
+            done
           else
-            echo "has_files=false" >> "$GITHUB_OUTPUT"
+            CHANGED=$(git diff --name-only HEAD~1 HEAD -- "singbox/rules/" 2>/dev/null || git diff --name-only HEAD -- "singbox/rules/")
+            for f in $CHANGED; do
+              if [[ "$f" == *.json ]]; then
+                [ -f "$f" ] && FILES="$FILES $f"
+              fi
+            done
           fi
+          if [ -z "$FILES" ]; then
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_files=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+          echo "Target files: $FILES"
 
       - name: Download sing-box
-        if: steps.check.outputs.has_files == 'true'
+        if: steps.files.outputs.has_files == 'true'
         run: |
-          # 通过 GitHub API 获取最新 release 的 linux-amd64 下载链接
           ASSET_URL=$(curl -sL "https://api.github.com/repos/SagerNet/sing-box/releases/latest" \
             | grep -o '"browser_download_url": *"[^"]*linux-amd64[^"]*\.tar\.gz"' \
             | head -1 \
@@ -40,31 +63,29 @@ jobs:
           echo "Downloading: $ASSET_URL"
           curl -sL "$ASSET_URL" -o sing-box.tar.gz
           tar xzf sing-box.tar.gz
-          # 解压后的目录名不确定，找到 sing-box 二进制即可
           find . -name "sing-box" -type f -not -path "./sing-box*" | head -1 | xargs -I{} cp {} ./sing-box
           chmod +x sing-box
           ./sing-box version
 
       - name: Compile rule-sets
-        if: steps.check.outputs.has_files == 'true'
+        if: steps.files.outputs.has_files == 'true'
         run: |
           mkdir -p output
-          for f in singbox/rules/*.json; do
-            [ -f "$f" ] || continue
+          for f in ${{ steps.files.outputs.files }}; do
             name=$(basename "$f" .json)
             echo "Compiling $f -> output/${name}.srs"
             ./sing-box rule-set compile -o "output/${name}.srs" "$f"
           done
 
       - name: Upload artifacts
-        if: steps.check.outputs.has_files == 'true'
+        if: steps.files.outputs.has_files == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: srs-rulesets
           path: output/*.srs
 
       - name: Commit compiled rulesets
-        if: steps.check.outputs.has_files == 'true'
+        if: steps.files.outputs.has_files == 'true'
         run: |
           mkdir -p output/singbox
           mv output/*.srs output/singbox/ 2>/dev/null || true

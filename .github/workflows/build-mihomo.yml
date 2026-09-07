@@ -6,32 +6,104 @@ on:
       - "mihomo/**"
     branches: [main]
   workflow_dispatch:
+    inputs:
+      behavior:
+        description: "规则类型 (domain/ipcidr/classical)，留空则全部"
+        required: false
+      files:
+        description: "指定文件名（如 direct.yaml），留空则编译改动的文件"
+        required: false
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  detect:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        behavior: [domain, ipcidr, classical]
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has_changes: ${{ steps.set-matrix.outputs.has_changes }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Check for source files
-        id: check
+      - name: Detect changed files
+        id: set-matrix
         run: |
-          if ls mihomo/${{ matrix.behavior }}/*.yaml mihomo/${{ matrix.behavior }}/*.txt 2>/dev/null | head -1 > /dev/null; then
-            echo "has_files=true" >> "$GITHUB_OUTPUT"
+          BEHAVIORS="[]"
+          HAS_CHANGES="false"
+
+          # 手动指定文件模式
+          if [ -n "${{ github.event.inputs.files }}" ]; then
+            # 手动指定的文件，按目录自动归类 behavior
+            for fname in ${{ github.event.inputs.files }}; do
+              for beh in domain ipcidr classical; do
+                if [ -f "mihomo/$beh/$fname" ]; then
+                  BEHAVIORS=$(echo "$BEHAVIORS" | jq --arg b "$beh" '. + [$b] | unique')
+                fi
+              done
+            done
+            HAS_CHANGES="true"
+          # 手动指定 behavior 模式
+          elif [ -n "${{ github.event.inputs.behavior }}" ]; then
+            BEHAVIORS='["${{ github.event.inputs.behavior }}"]'
+            HAS_CHANGES="true"
+          # 自动检测改动文件
           else
-            echo "has_files=false" >> "$GITHUB_OUTPUT"
+            CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'mihomo/' 2>/dev/null || git diff --name-only HEAD -- 'mihomo/')
+            for beh in domain ipcidr classical; do
+              if echo "$CHANGED" | grep -q "^mihomo/$beh/"; then
+                BEHAVIORS=$(echo "$BEHAVIORS" | jq --arg b "$beh" '. + [$b] | unique')
+              fi
+            done
+            if [ "$BEHAVIORS" != "[]" ]; then
+              HAS_CHANGES="true"
+            fi
           fi
 
-      - name: Download mihomo
-        if: steps.check.outputs.has_files == 'true'
+          echo "matrix={\"behavior\":$BEHAVIORS}" >> "$GITHUB_OUTPUT"
+          echo "has_changes=$HAS_CHANGES" >> "$GITHUB_OUTPUT"
+          echo "Detected behaviors: $BEHAVIORS"
+
+  build:
+    needs: detect
+    if: needs.detect.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.detect.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find target files
+        id: files
         run: |
-          # 通过 GitHub API 获取最新 release 的 linux-amd64 下载链接
+          FILES=""
+          # 手动指定文件
+          if [ -n "${{ github.event.inputs.files }}" ]; then
+            for fname in ${{ github.event.inputs.files }}; do
+              fpath="mihomo/${{ matrix.behavior }}/$fname"
+              if [ -f "$fpath" ]; then
+                FILES="$FILES $fpath"
+              fi
+            done
+          else
+            # 只取本次改动的文件
+            CHANGED=$(git diff --name-only HEAD~1 HEAD -- "mihomo/${{ matrix.behavior }}/" 2>/dev/null || git diff --name-only HEAD -- "mihomo/${{ matrix.behavior }}/")
+            for f in $CHANGED; do
+              if [[ "$f" == *.yaml || "$f" == *.txt ]]; then
+                [ -f "$f" ] && FILES="$FILES $f"
+              fi
+            done
+          fi
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+          echo "Target files: $FILES"
+
+      - name: Download mihomo
+        if: steps.files.outputs.files != ''
+        run: |
           ASSET_URL=$(curl -sL "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" \
             | grep -o '"browser_download_url": *"[^"]*linux-amd64[^"]*"' \
             | head -1 \
@@ -42,7 +114,6 @@ jobs:
           fi
           echo "Downloading: $ASSET_URL"
           curl -sL "$ASSET_URL" -o mihomo-dl
-          # 处理可能的压缩格式
           if file mihomo-dl | grep -q gzip; then
             mv mihomo-dl mihomo.gz && gunzip mihomo.gz
           elif file mihomo-dl | grep -q "XZ\|xz"; then
@@ -56,18 +127,17 @@ jobs:
           ./mihomo -v
 
       - name: Build ${{ matrix.behavior }} rulesets
-        if: steps.check.outputs.has_files == 'true'
+        if: steps.files.outputs.files != ''
         run: |
           mkdir -p output
-          for f in mihomo/${{ matrix.behavior }}/*.yaml mihomo/${{ matrix.behavior }}/*.txt; do
-            [ -f "$f" ] || continue
+          for f in ${{ steps.files.outputs.files }}; do
             name=$(basename "$f" | sed 's/\.\(yaml\|txt\)$//')
             echo "Converting $f -> output/${name}.mrs"
             ./mihomo convert-ruleset ${{ matrix.behavior }} yaml "$f" "output/${name}.mrs"
           done
 
       - name: Upload artifacts
-        if: steps.check.outputs.has_files == 'true'
+        if: steps.files.outputs.files != ''
         uses: actions/upload-artifact@v4
         with:
           name: mrs-${{ matrix.behavior }}
@@ -75,6 +145,7 @@ jobs:
 
   commit:
     needs: build
+    if: always() && needs.build.result != 'skipped'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
