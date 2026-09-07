@@ -3,7 +3,7 @@ name: Build sing-box Ruleset
 on:
   push:
     paths:
-      - "singbox/**"
+      - "singbox/**/*.json"
     branches: [main]
   workflow_dispatch:
     inputs:

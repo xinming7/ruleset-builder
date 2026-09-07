@@ -3,7 +3,8 @@ name: Build mihomo Ruleset
 on:
   push:
     paths:
-      - "mihomo/**"
+      - "mihomo/**/*.yaml"
+      - "mihomo/**/*.txt"
     branches: [main]
   workflow_dispatch:
     inputs:
