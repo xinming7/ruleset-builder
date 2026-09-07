@@ -1,0 +1,34 @@
+{
+  "version": 5,
+  "rules": [
+    {
+      "domain": [
+        "proxy.api.030101.xyz",
+        "bilibili.zp0.top",
+        "time.is",
+        "resolve-dl.cloud.blackmagicdesign.com",
+        "updates.cdn-apple.com",
+        "ccmdls.adobe.com",   
+        "s1.4dv.ai",
+        "bot.lsposed.org"
+      ]
+    },
+    {
+      "domain_suffix": [
+        "pool.ntp.org",
+        "decreypt.day",
+        "ghfast.top",
+        "v6.gh-proxy.org",
+        "macked.app",
+        "xiaomi.net",
+        "xiaomi.com",
+        "cloudflare.com"
+      ]
+    },
+    {
+      "ip_cidr": [
+        "103.14.76.98/32"
+      ]
+    }
+  ]
+}
