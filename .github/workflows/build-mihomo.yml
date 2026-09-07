@@ -186,4 +186,4 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add mihomo/
           git diff --cached --quiet || git commit -m "chore: update mihomo rulesets [skip ci]"
-          git push
+          git push --set-upstream origin rules
