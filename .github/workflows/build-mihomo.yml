@@ -37,7 +37,6 @@ jobs:
 
           # 手动指定文件模式
           if [ -n "${{ github.event.inputs.files }}" ]; then
-            # 手动指定的文件，按目录自动归类 behavior
             for fname in ${{ github.event.inputs.files }}; do
               for beh in domain ipcidr classical; do
                 if [ -f "mihomo/$beh/$fname" ]; then
@@ -78,32 +77,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Find target files
-        id: files
-        run: |
-          FILES=""
-          # 手动指定文件
-          if [ -n "${{ github.event.inputs.files }}" ]; then
-            for fname in ${{ github.event.inputs.files }}; do
-              fpath="mihomo/${{ matrix.behavior }}/$fname"
-              if [ -f "$fpath" ]; then
-                FILES="$FILES $fpath"
-              fi
-            done
-          else
-            # 只取本次改动的文件
-            CHANGED=$(git diff --name-only HEAD~1 HEAD -- "mihomo/${{ matrix.behavior }}/" 2>/dev/null || git diff --name-only HEAD -- "mihomo/${{ matrix.behavior }}/")
-            for f in $CHANGED; do
-              if [[ "$f" == *.yaml || "$f" == *.txt ]]; then
-                [ -f "$f" ] && FILES="$FILES $f"
-              fi
-            done
-          fi
-          echo "files=$FILES" >> "$GITHUB_OUTPUT"
-          echo "Target files: $FILES"
-
       - name: Download mihomo
-        if: steps.files.outputs.files != ''
         run: |
           ASSET_URL=$(curl -sL "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" \
             | grep -o '"browser_download_url": *"[^"]*linux-amd64[^"]*"' \
@@ -114,40 +88,18 @@ jobs:
             exit 1
           fi
           echo "Downloading: $ASSET_URL"
-          curl -sL "$ASSET_URL" -o mihomo-dl
-          # 列出下载文件信息方便排查
-          file mihomo-dl
-          # 清理可能存在的旧文件/目录，避免 gunzip/unxz 报 "already exists"
-          rm -rf mihomo mihomo.gz mihomo.xz
-          if file mihomo-dl | grep -q gzip; then
-            mv mihomo-dl mihomo.gz && gunzip -f mihomo.gz
-          elif file mihomo-dl | grep -q "XZ\|xz"; then
-            mv mihomo-dl mihomo.xz && unxz -f mihomo.xz
-          elif file mihomo-dl | grep -q Zip; then
-            unzip -o mihomo-dl
-          else
-            mv -f mihomo-dl mihomo
-          fi
-          # 如果解压出了目录，找到里面的二进制
-          if [ ! -x mihomo ] || file mihomo | grep -q directory; then
-            MIBIN=$(find . -path ./mihomo-dl -prune -o -name "mihomo" -type f -print 2>/dev/null | head -1)
-            if [ -n "$MIBIN" ] && [ "$(realpath "$MIBIN")" != "$(realpath ./mihomo)" ]; then
-              cp "$MIBIN" ./mihomo
-            fi
-          fi
-          chmod +x mihomo
-          ./mihomo -v
+          curl -sL "$ASSET_URL" -o mihomo-bin.gz
+          gunzip -f mihomo-bin.gz
+          chmod +x mihomo-bin
+          ./mihomo-bin -v
 
       - name: Build ${{ matrix.behavior }} rulesets
-        if: steps.files.outputs.files != ''
         run: |
           mkdir -p output
-          # 直接把整个行为目录传给 convert-ruleset，编译为单个 .mrs
           echo "Converting mihomo/${{ matrix.behavior }}/ -> output/${{ matrix.behavior }}.mrs"
-          ./mihomo convert-ruleset ${{ matrix.behavior }} yaml "mihomo/${{ matrix.behavior }}" "output/${{ matrix.behavior }}.mrs"
+          ./mihomo-bin convert-ruleset ${{ matrix.behavior }} yaml "mihomo/${{ matrix.behavior }}/" "output/${{ matrix.behavior }}.mrs"
 
       - name: Upload artifacts
-        if: steps.files.outputs.files != ''
         uses: actions/upload-artifact@v4
         with:
           name: mrs-${{ matrix.behavior }}
