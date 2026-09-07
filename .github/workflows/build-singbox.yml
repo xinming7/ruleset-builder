@@ -10,6 +10,11 @@ on:
       files:
         description: "指定文件名（如 direct.json），留空则编译改动的文件"
         required: false
+      build_all:
+        description: "强制打包目录下所有 .json 文件"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -26,7 +31,12 @@ jobs:
         id: files
         run: |
           FILES=""
-          if [ -n "${{ github.event.inputs.files }}" ]; then
+          if [ "${{ github.event.inputs.build_all }}" = "true" ]; then
+            # 强制打包所有 .json 文件
+            for f in singbox/rules/*.json; do
+              [ -f "$f" ] && FILES="$FILES $f"
+            done
+          elif [ -n "${{ github.event.inputs.files }}" ]; then
             for fname in ${{ github.event.inputs.files }}; do
               fpath="singbox/rules/$fname"
               if [ -f "$fpath" ]; then
