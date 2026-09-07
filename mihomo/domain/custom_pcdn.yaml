@@ -36,3 +36,7 @@ payload:
   - DOMAIN-SUFFIX,p2pvod-ws.douyucdn.cn
   - DOMAIN,hw-edge.biliapi.net
   - DOMAIN,ali-edge.biliapi.net
+  - DOMAIN-REGEX,.*pcdn.*biliapi.net
+  - DOMAIN-REGEX,.*pcdn.*youku.com
+  - DOMAIN-REGEX,.*p2p.*douyucdn.cn
+  - DOMAIN-REGEX,.*p2p.*qq.com
