@@ -1,3 +1,4 @@
+behavior: domain
 payload:
-  - DOMAIN,services.googleapis.cn
-  - DOMAIN,web.fscloud.app
+  - 'services.googleapis.cn'
+  - 'web.fscloud.app'
