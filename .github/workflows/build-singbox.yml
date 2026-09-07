@@ -117,25 +117,40 @@ jobs:
           name: srs-rulesets
           path: output/*.srs
 
-      - name: Push to rules branch
+      - name: Checkout rules branch
         if: steps.files.outputs.has_files == 'true'
-        run: |
-          mkdir -p release/singbox
-          cp output/*.srs release/singbox/
-          if ! ls release/singbox/*.srs 2>/dev/null | head -1 > /dev/null; then
-            echo "No .srs files to commit"
-            exit 0
-          fi
+        uses: actions/checkout@v4
+        with:
+          ref: rules
+          path: rules-repo
+          fetch-depth: 1
+        continue-on-error: true
+        id: checkout-rules
 
-          cd release
+      - name: Init rules branch if not exists
+        if: steps.files.outputs.has_files == 'true' && steps.checkout-rules.outcome == 'failure'
+        run: |
+          mkdir -p rules-repo
+          cd rules-repo
           git init
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b rules
-
           git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-          git fetch origin rules 2>/dev/null && git reset origin/rules 2>/dev/null || true
 
-          git add .
+      - name: Push to rules branch
+        if: steps.files.outputs.has_files == 'true'
+        run: |
+          mkdir -p rules-repo/singbox
+          cp output/*.srs rules-repo/singbox/
+          if ! ls rules-repo/singbox/*.srs 2>/dev/null | head -1 > /dev/null; then
+            echo "No .srs files to commit"
+            exit 0
+          fi
+
+          cd rules-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add singbox/
           git diff --cached --quiet || git commit -m "chore: update sing-box rulesets [skip ci]"
-          git push origin rules --force
+          git push

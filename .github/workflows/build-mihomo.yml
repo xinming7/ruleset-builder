@@ -151,24 +151,38 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Push to rules branch
-        run: |
-          mkdir -p release/mihomo
-          find artifacts -name "*.mrs" -exec cp {} release/mihomo/ \;
-          if ! ls release/mihomo/*.mrs 2>/dev/null | head -1 > /dev/null; then
-            echo "No .mrs files to commit"
-            exit 0
-          fi
+      - name: Checkout rules branch
+        uses: actions/checkout@v4
+        with:
+          ref: rules
+          path: rules-repo
+          fetch-depth: 1
+        continue-on-error: true
+        id: checkout-rules
 
-          cd release
+      - name: Init rules branch if not exists
+        if: steps.checkout-rules.outcome == 'failure'
+        run: |
+          mkdir -p rules-repo
+          cd rules-repo
           git init
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b rules
-
           git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-          git fetch origin rules 2>/dev/null && git reset origin/rules 2>/dev/null || true
 
-          git add .
+      - name: Push to rules branch
+        run: |
+          mkdir -p rules-repo/mihomo
+          find artifacts -name "*.mrs" -exec cp {} rules-repo/mihomo/ \;
+          if ! ls rules-repo/mihomo/*.mrs 2>/dev/null | head -1 > /dev/null; then
+            echo "No .mrs files to commit"
+            exit 0
+          fi
+
+          cd rules-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add mihomo/
           git diff --cached --quiet || git commit -m "chore: update mihomo rulesets [skip ci]"
-          git push origin rules --force
+          git push
