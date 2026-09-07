@@ -163,6 +163,7 @@ jobs:
       - name: Init rules branch if not exists
         if: steps.checkout-rules.outcome == 'failure'
         run: |
+          rm -rf rules-repo
           mkdir -p rules-repo
           cd rules-repo
           git init
