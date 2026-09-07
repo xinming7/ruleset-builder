@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "rules": [
+    {
+      "domain_suffix": [
+        "ads.example.com",
+        "tracker.example.com",
+        "analytics.example.com"
+      ],
+      "domain_keyword": [
+        "adserver",
+        "analytics"
+      ]
+    }
+  ]
+}

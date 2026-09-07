@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "rules": [
+    {
+      "domain_suffix": [
+        ".cn",
+        ".baidu.com",
+        ".qq.com",
+        ".taobao.com",
+        ".tmall.com",
+        ".jd.com",
+        ".alipay.com",
+        ".alibaba.com",
+        ".weibo.com",
+        ".zhihu.com",
+        ".bilibili.com",
+        ".douyin.com",
+        ".xiaomi.com",
+        ".huawei.com",
+        ".163.com",
+        ".126.com",
+        ".sina.com",
+        ".sohu.com",
+        ".csdn.net",
+        ".aliyun.com",
+        ".tencent.com",
+        ".mi.com"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+name: Build mihomo Ruleset
+
+on:
+  push:
+    paths:
+      - "mihomo/**"
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  MIHOMO_VERSION: "v1.19.8"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        behavior: [domain, ipcidr, classical]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for source files
+        id: check
+        run: |
+          if ls mihomo/${{ matrix.behavior }}/*.yaml mihomo/${{ matrix.behavior }}/*.txt 2>/dev/null | head -1 > /dev/null; then
+            echo "has_files=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download mihomo
+        if: steps.check.outputs.has_files == 'true'
+        run: |
+          curl -sL "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/mihomo-linux-amd64-${MIHOMO_VERSION}.gz" -o mihomo.gz
+          gunzip mihomo.gz
+          chmod +x mihomo
+
+      - name: Build ${{ matrix.behavior }} rulesets
+        if: steps.check.outputs.has_files == 'true'
+        run: |
+          mkdir -p output
+          for f in mihomo/${{ matrix.behavior }}/*.yaml mihomo/${{ matrix.behavior }}/*.txt; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f" | sed 's/\.\(yaml\|txt\)$//')
+            echo "Converting $f -> output/${name}.mrs"
+            ./mihomo convert-ruleset ${{ matrix.behavior }} yaml "$f" "output/${name}.mrs"
+          done
+
+      - name: Upload artifacts
+        if: steps.check.outputs.has_files == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mrs-${{ matrix.behavior }}
+          path: output/*.mrs
+
+  commit:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Commit compiled rulesets
+        run: |
+          mkdir -p output/mihomo
+          cp artifacts/**/*.mrs output/mihomo/ 2>/dev/null || true
+          if ls output/mihomo/*.mrs 2>/dev/null | head -1 > /dev/null; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add output/mihomo/
+            git diff --cached --quiet || git commit -m "chore: update mihomo rulesets [skip ci]"
+            git push
+          else
+            echo "No .mrs files to commit"
+          fi

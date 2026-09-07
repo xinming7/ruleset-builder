@@ -1,0 +1,70 @@
+name: Build sing-box Ruleset
+
+on:
+  push:
+    paths:
+      - "singbox/**"
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SINGBOX_VERSION: "1.11.4"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for source files
+        id: check
+        run: |
+          if ls singbox/rules/*.json 2>/dev/null | head -1 > /dev/null; then
+            echo "has_files=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download sing-box
+        if: steps.check.outputs.has_files == 'true'
+        run: |
+          curl -sL "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-amd64.tar.gz" -o sing-box.tar.gz
+          tar xzf sing-box.tar.gz
+          mv sing-box-${SINGBOX_VERSION}-linux-amd64/sing-box .
+          chmod +x sing-box
+
+      - name: Compile rule-sets
+        if: steps.check.outputs.has_files == 'true'
+        run: |
+          mkdir -p output
+          for f in singbox/rules/*.json; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f" .json)
+            echo "Compiling $f -> output/${name}.srs"
+            ./sing-box rule-set compile -o "output/${name}.srs" "$f"
+          done
+
+      - name: Upload artifacts
+        if: steps.check.outputs.has_files == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: srs-rulesets
+          path: output/*.srs
+
+      - name: Commit compiled rulesets
+        if: steps.check.outputs.has_files == 'true'
+        run: |
+          mkdir -p output/singbox
+          mv output/*.srs output/singbox/ 2>/dev/null || true
+          if ls output/singbox/*.srs 2>/dev/null | head -1 > /dev/null; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add output/singbox/
+            git diff --cached --quiet || git commit -m "chore: update sing-box rulesets [skip ci]"
+            git push
+          else
+            echo "No .srs files to commit"
+          fi

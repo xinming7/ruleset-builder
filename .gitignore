@@ -1,0 +1,13 @@
+# 编译产物（由 CI 自动提交到 output/ 目录）
+# 如不想让 CI 自动提交，取消下面的注释
+# output/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
