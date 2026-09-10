@@ -16,3 +16,4 @@ payload:
   - '*.macked.app'
   - '*.time.is'
   - '*.cloudflare.com'
+  - '*.mediafire.com'
