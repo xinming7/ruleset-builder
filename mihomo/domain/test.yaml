@@ -1,4 +1,4 @@
 behavior: domain
 payload:
   - '*.test.com'
-  - '*.test2.com'
+  - '*.test3.com'
