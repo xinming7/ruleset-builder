@@ -64,30 +64,10 @@ jobs:
           echo "files=$FILES" >> "$GITHUB_OUTPUT"
           echo "Target files: $FILES"
 
-      - name: Download sing-box
+      - name: Prepare sing-box binary
         if: steps.files.outputs.has_files == 'true'
         run: |
-          ASSET_URL=$(curl -sL "https://api.github.com/repos/SagerNet/sing-box/releases/latest" \
-            | grep -o '"browser_download_url": *"[^"]*linux-amd64[^"]*\.tar\.gz"' \
-            | head -1 \
-            | sed 's/"browser_download_url": *"//;s/"$//')
-          if [ -z "$ASSET_URL" ]; then
-            echo "ERROR: 无法获取 sing-box 下载链接"
-            exit 1
-          fi
-          echo "Downloading: $ASSET_URL"
-          curl -sL "$ASSET_URL" -o sing-box.tar.gz
-          mkdir -p sing-box-extract
-          tar xzf sing-box.tar.gz -C sing-box-extract --strip-components=0
-          SINGBOX_BIN=$(find sing-box-extract -name "sing-box" -type f | head -1)
-          if [ -z "$SINGBOX_BIN" ]; then
-            echo "ERROR: 未找到 sing-box 二进制文件"
-            echo "=== 解压内容 ==="
-            find sing-box-extract -type f
-            exit 1
-          fi
-          cp "$SINGBOX_BIN" ./sing-box
-          rm -rf sing-box-extract
+          cp bin/sing-box-linux-amd64 sing-box
           chmod +x sing-box
           ./sing-box version
 

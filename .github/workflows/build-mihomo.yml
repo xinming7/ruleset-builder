@@ -83,19 +83,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download mihomo
+      - name: Prepare mihomo binary
         run: |
-          ASSET_URL=$(curl -sL "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" \
-            | grep -o '"browser_download_url": *"[^"]*linux-amd64[^"]*"' \
-            | head -1 \
-            | sed 's/"browser_download_url": *"//;s/"$//')
-          if [ -z "$ASSET_URL" ]; then
-            echo "ERROR: 无法获取 mihomo 下载链接"
-            exit 1
-          fi
-          echo "Downloading: $ASSET_URL"
-          curl -sL "$ASSET_URL" -o mihomo-bin.gz
-          gunzip -f mihomo-bin.gz
+          cp bin/mihomo-linux-amd64 mihomo-bin
           chmod +x mihomo-bin
           ./mihomo-bin -v
 
