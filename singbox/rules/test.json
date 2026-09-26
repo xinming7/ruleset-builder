@@ -3,7 +3,8 @@
   "rules": [
     {
       "domain": [
-        "test.com"
+        "test.com",
+        "test2.com"
       ],
       "domain_suffix": [
         ".cn"
