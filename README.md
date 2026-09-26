@@ -9,10 +9,22 @@
 
 ```
 ├── mihomo/
-│   ├── domain/       # 域名规则 (.yaml/.txt) → .mrs
-│   └── ipcidr/       # IP-CIDR 规则 (.yaml/.txt) → .mrs
+│   ├── domain/              # 域名规则 (.yaml/.txt) → .mrs
+│   │   ├── direct.yaml      # 直连域名
+│   │   ├── custom_ai.yaml   # AI 服务域名
+│   │   ├── custom_direct.yaml  # 自定义直连域名
+│   │   ├── custom_pcdn.yaml    # PCDN 域名屏蔽
+│   │   └── custom_proxy.yaml   # 代理域名
+│   └── ipcidr/              # IP-CIDR 规则 (.yaml/.txt) → .mrs
+│       ├── direct-ip.yaml   # 直连 IP
+│       └── custom_pcdnip.yaml  # PCDN IP 黑名单
 └── singbox/
-    └── rules/        # sing-box 规则 (.json) → .srs
+    └── rules/               # sing-box 规则 (.json) → .srs
+        ├── direct.json
+        ├── custom_direct.json
+        ├── custom_lanip.json
+        ├── custom_pcdn.json
+        └── custom_proxy.json
 ```
 
 产物存放在 `rules` 分支，与源码完全隔离，本地 push 不会影响产物。
@@ -68,7 +80,7 @@ git push
 GitHub Actions 会自动：
 - 检测变更的文件
 - 校验文件格式（YAML/JSON 语法）
-- 下载对应工具链（自动获取最新版本）
+- 从仓库 [Release](https://github.com/xinming7/ruleset-builder/releases/tag/kernel-v1) 获取预置内核
 - 编译生成 `.mrs` / `.srs`
 - 将产物推送到 `rules` 分支
 
@@ -114,7 +126,11 @@ rules:
 - 选择指定 behavior 类型（domain/ipcidr）
 - 强制打包所有文件
 
-## 工具版本
+## 内核版本
 
-- mihomo: 自动获取 GitHub 最新 release
-- sing-box: 自动获取 GitHub 最新 release
+构建所用的内核版本固定在仓库 [Release](https://github.com/xinming7/ruleset-builder/releases/tag/kernel-v1) 中：
+
+- **mihomo**: v1.19.31 (linux-amd64)
+- **sing-box**: v1.14.2 (linux-amd64)
+
+更新内核版本时，下载新版二进制上传到新 Release，同步更新 workflow 中的 Tag 名称即可。
