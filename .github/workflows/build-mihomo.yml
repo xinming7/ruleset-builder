@@ -83,9 +83,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Prepare mihomo binary
+      - name: Download mihomo from release
         run: |
-          cp bin/mihomo-linux-amd64 mihomo-bin
+          curl -sL "https://github.com/xinming7/ruleset-builder/releases/download/kernel-v1/mihomo-linux-amd64" -o mihomo-bin
           chmod +x mihomo-bin
           ./mihomo-bin -v
 

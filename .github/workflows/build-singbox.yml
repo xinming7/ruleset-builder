@@ -64,10 +64,10 @@ jobs:
           echo "files=$FILES" >> "$GITHUB_OUTPUT"
           echo "Target files: $FILES"
 
-      - name: Prepare sing-box binary
+      - name: Download sing-box from release
         if: steps.files.outputs.has_files == 'true'
         run: |
-          cp bin/sing-box-linux-amd64 sing-box
+          curl -sL "https://github.com/xinming7/ruleset-builder/releases/download/kernel-v1/sing-box-linux-amd64" -o sing-box
           chmod +x sing-box
           ./sing-box version
 
