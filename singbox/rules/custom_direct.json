@@ -10,19 +10,19 @@
         "updates.cdn-apple.com",
         "ccmdls.adobe.com",   
         "s1.4dv.ai",
-        "bot.lsposed.org"
+        "bot.lsposed.org",
+        "pool.ntp.org",
+        "ntp.aliyun.com"
       ]
     },
     {
       "domain_suffix": [
-        "pool.ntp.org",
         "decrypt.day",
         "ghfast.top",
         "v6.gh-proxy.org",
         "macked.app",
         "xiaomi.net",
         "xiaomi.com",
-        "cloudflare.com",
         "mediafire.com",
         "xinming.cc.cd",
         "xinming.dpdns.org",
