@@ -1,4 +1,0 @@
-behavior: domain
-payload:
-  - '*.test.com'
-  - '*.test3.com'
