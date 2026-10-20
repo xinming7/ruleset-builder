@@ -5,7 +5,6 @@
       "domain": [
         "proxy.api.030101.xyz",
         "bilibili.zp0.top",
-        "time.is",
         "resolve-dl.cloud.blackmagicdesign.com",
         "updates.cdn-apple.com",
         "ccmdls.adobe.com",   
@@ -17,17 +16,21 @@
     },
     {
       "domain_suffix": [
-        "decrypt.day",
         "ghfast.top",
-        "v6.gh-proxy.org",
-        "macked.app",
+        "gh-proxy.org",
+        "decrypt.day",
         "xiaomi.net",
         "xiaomi.com",
+        "macked.app",
+        "time.is",
         "mediafire.com",
+        "viccovlog.com",
         "xinming.cc.cd",
         "xinming.dpdns.org",
         "bmxinming.ccwu.cc",
-        "viccovlog.com"
+        "bmxm.de5.net",
+        "qlq.us.ci",
+        "xinming.kdns.fr"
       ]
     },
     {
