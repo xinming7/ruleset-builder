@@ -1,6 +1,5 @@
 behavior: domain
 payload:
-  - 'proxy.api.030101.xyz'
   - '+.argotunnel.com'
   - '+.cftunnel.com'
   - '+.trycloudflare.com'
