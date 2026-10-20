@@ -1,0 +1,17 @@
+{
+  "version": 5,
+  "rules": [
+    {
+      "domain": [
+        "miwifi.com"
+      ]
+    },
+    {
+      "domain_suffix": [
+        "argotunnel.com",
+        "cftunnel.com",
+        "trycloudflare.com"
+      ]
+    }
+  ]
+}
