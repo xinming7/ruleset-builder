@@ -1,0 +1,3 @@
+behavior: ipcidr
+payload:
+  - '103.14.76.98/32'
