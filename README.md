@@ -8,10 +8,19 @@
 ## 目录结构
 
 ```
-├── .github/workflows/
-│   ├── build-mihomo.yml     # 规则变更 → 编译 .mrs → 推送 rules 分支
-│   ├── build-singbox.yml    # 规则变更 → 编译 .srs → 推送 rules 分支
-│   └── update-kernel.yml    # 每周从上游同步内核到 kernel-v1 Release
+├── .github/
+│   ├── workflows/
+│   │   ├── build-mihomo.yml      # 规则变更 → 编译 .mrs → 推送 rules 分支
+│   │   ├── build-singbox.yml     # 规则变更 → 编译 .srs → 推送 rules 分支
+│   │   ├── update-kernel.yml     # 每周从上游同步内核到 kernel-v1 Release
+│   │   └── validate.yml          # 只读校验：lint / 规则语义 / 发布契约
+│   ├── actions/publish-rules/    # 两个构建流程共用的发布逻辑
+│   ├── keep-rulesets.txt         # 允许保留的"无源文件产物"白名单
+│   └── dependabot.yml
+├── scripts/
+│   ├── fetch-kernel.sh           # 内核下载 / 解包 / 自检 / canary / 上传
+│   └── validate_rules.py         # 规则语义校验
+├── requirements.txt              # 校验脚本依赖（pyyaml）
 ├── mihomo/
 │   ├── domain/              # 域名规则 (.yaml/.txt) → .mrs
 │   │   ├── custom_ai.yaml          # AI 服务域名
@@ -84,11 +93,13 @@ git push
 ```
 
 GitHub Actions 会自动：
-- 检测变更的文件
-- 校验文件格式（YAML/JSON 语法）
+- 检测变更的文件（按 push 事件的 base commit 做全区间 diff，不只最后一条 commit）
+- 校验文件格式（YAML/JSON 语法）与内核 SHA256
 - 从仓库 [Release](https://github.com/xinming7/ruleset-builder/releases/tag/kernel-v1) 获取预置内核（版本由 `Update Kernel` workflow 自动维护）
 - 编译生成 `.mrs` / `.srs`
-- 将产物推送到 `rules` 分支
+- 清理孤儿产物、同步分支 README，再把产物推送到 `rules` 分支（只在构建**成功**时发布）
+
+同时 `Validate` workflow 会跑只读校验：`actionlint`、规则语义（域名/CIDR 格式、重复项、behavior 与目录一致性、产物命名冲突），以及每日一次的"源文件 ↔ 产物"契约与 raw URL 可达性检查。
 
 ### 4. 引用规则集
 
@@ -97,16 +108,16 @@ GitHub Actions 会自动：
 **mihomo 配置**:
 ```yaml
 rule-providers:
-  my-direct:
+  my-custom-direct:
     type: http
     behavior: domain
     format: mrs
-    url: https://raw.githubusercontent.com/xinming7/ruleset-builder/rules/mihomo/direct.mrs
+    url: https://raw.githubusercontent.com/xinming7/ruleset-builder/rules/mihomo/custom_direct.mrs
     interval: 86400
-    path: ./ruleset/direct.mrs
+    path: ./ruleset/custom_direct.mrs
 
 rules:
-  - RULE-SET,my-direct,DIRECT
+  - RULE-SET,my-custom-direct,DIRECT
 ```
 
 **sing-box 配置**:
@@ -116,15 +127,35 @@ rules:
     "rule_set": [
       {
         "type": "remote",
-        "tag": "direct",
+        "tag": "custom_direct",
         "format": "binary",
-        "url": "https://raw.githubusercontent.com/xinming7/ruleset-builder/rules/singbox/direct.srs",
+        "url": "https://raw.githubusercontent.com/xinming7/ruleset-builder/rules/singbox/custom_direct.srs",
         "update_interval": "1d"
       }
     ]
   }
 }
 ```
+
+## 校验与测试
+
+`Validate` workflow 在 PR、push 到 main、以及每天 UTC 04:00 运行，全程只读，不写 `rules` 分支：
+
+| job | 触发 | 内容 |
+|---|---|---|
+| `lint-workflows` | 全部 | `actionlint`（版本 + SHA256 双重固定）+ 所有 YAML/JSON 可解析性 |
+| `validate-rules` | 全部 | `scripts/validate_rules.py`：域名格式、CIDR 合法性、重复项、`behavior` 与目录一致性、未知字段、产物命名冲突 |
+| `contract` | 定时 / 手动 | 源文件 ↔ `rules` 分支产物双向比对（keep 清单豁免）+ 所有产物 raw URL 返回 200 |
+
+本地等价命令：
+
+```bash
+pip install -r requirements.txt
+python3 scripts/validate_rules.py -v      # 语义校验，退出码 1 = 有 error
+bash scripts/fetch-kernel.sh mihomo       # 只下载/校验内核到 dist/，不上传
+```
+
+输出前缀 `::warning::` 不会让流水线失败，`::error::` 才会。新增规则前建议本地先跑一遍。
 
 ## 手动触发
 
@@ -133,6 +164,8 @@ rules:
 - 强制打包所有文件
 
 内核更新有自己的入口：Actions → **Update Kernel** → Run workflow，可选择只更新 `mihomo` / `sing-box`，或勾选 `force` 忽略版本比对强制重新下载。
+
+校验流水线：Actions → **Validate** → Run workflow（会连带跑一次"源文件 ↔ 产物"契约检查与 URL 可达性检查）。
 
 ## 内核版本与自动更新
 
@@ -145,7 +178,9 @@ rules:
 
 发布位置：<https://github.com/xinming7/ruleset-builder/releases/tag/kernel-v1>
 
-执行流程：读 `kernel-manifest.json` → 查上游 `releases/latest` → 比对版本 → 下载并 `-v`/`version` 自检 → **canary 编译**一条真实规则（只拷贝单文件到干净目录，模拟构建 workflow 的运行条件）→ 覆盖资产 → 写回 manifest → `gh workflow run` 触发两个构建 workflow 全量重建。
+执行流程：`prepare` 读 `kernel-manifest.json` 并生成 matrix → `fetch`（两个内核并行、`fail-fast: false`，一个失败不影响另一个）逐内核查上游 `releases/latest` → 比对版本 → `scripts/fetch-kernel.sh` 下载、解包、`-v`/`version` 自检、**canary 编译**一条真实规则 → 覆盖资产 → `publish` 汇总结果、写回 manifest、重渲染 Release 描述、`gh workflow run` 触发对应构建 workflow 全量重建。
+
+两个内核的差异（资产命名、解包方式、自检与 canary 命令）都收敛在 `scripts/fetch-kernel.sh` 的 `case` 分支里；本地可以直接 `bash scripts/fetch-kernel.sh sing-box` 只做下载与校验、不上传。
 
 同一 Release 内的 `kernel-manifest.json` 记录当前生效版本、SHA256 与更新时间：
 
