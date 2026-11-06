@@ -1,0 +1,325 @@
+name: Update Kernel
+
+# 从上游（MetaCubeX/mihomo、SagerNet/sing-box）拉取最新稳定版内核，
+# 校验通过后覆盖 Release `kernel-v1` 中的固定名资产：
+#   mihomo-linux-amd64  /  sing-box-linux-amd64
+# 两个构建 workflow 用的就是这两个固定 URL，因此无需任何改动。
+# 同时维护 kernel-manifest.json（版本 + SHA256 + 更新时间）用于版本比对与追溯。
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'  # 每周一 UTC 02:00（北京时间 10:00），早于 03:00 的规则集构建
+  workflow_dispatch:
+    inputs:
+      kernel:
+        description: "要更新的内核"
+        required: false
+        type: choice
+        default: all
+        options:
+          - all
+          - mihomo
+          - sing-box
+      force:
+        description: "强制重新下载并覆盖（忽略版本比对与 patch 级限制）"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+# 不与构建 workflow 共用 `push-to-rules`，避免本 workflow 被自己触发的构建堵住
+concurrency:
+  group: update-kernel
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}   # prepare job 无 checkout，需显式指定仓库
+  KERNEL_RELEASE: kernel-v1
+  MANIFEST_ASSET: kernel-manifest.json
+  MIHOMO_REPO: MetaCubeX/mihomo
+  SINGBOX_REPO: SagerNet/sing-box
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      mihomo_current: ${{ steps.read.outputs.mihomo_current }}
+      singbox_current: ${{ steps.read.outputs.singbox_current }}
+    steps:
+      - name: Read current manifest
+        id: read
+        run: |
+          set -uo pipefail
+          mkdir -p .manifest
+          if gh release download "$KERNEL_RELEASE" -p "$MANIFEST_ASSET" -D .manifest --clobber 2>/dev/null; then
+            echo "已读取现有 manifest"
+          else
+            # 首次运行：按 README 记录的历史版本回填，使首跑能正确判定升级
+            echo '{"mihomo":"v1.19.31","sing-box":"v1.14.2","updated_at":null,"assets":{}}' \
+              > ".manifest/$MANIFEST_ASSET"
+            echo "manifest 不存在，使用历史版本作为基线"
+          fi
+          echo "mihomo_current=$(jq -r '.mihomo // ""' ".manifest/$MANIFEST_ASSET")" >> "$GITHUB_OUTPUT"
+          echo "singbox_current=$(jq -r '."sing-box" // ""' ".manifest/$MANIFEST_ASSET")" >> "$GITHUB_OUTPUT"
+          cat ".manifest/$MANIFEST_ASSET"
+
+  mihomo:
+    needs: prepare
+    if: |
+      needs.prepare.result == 'success' &&
+      (github.event_name == 'schedule' ||
+       github.event.inputs.kernel == 'all' ||
+       github.event.inputs.kernel == 'mihomo')
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.latest }}
+      changed: ${{ steps.ver.outputs.changed }}
+      sha256: ${{ steps.digest.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve upstream version
+        id: ver
+        env:
+          CURRENT: ${{ needs.prepare.outputs.mihomo_current }}
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          set -uo pipefail
+          LATEST=$(gh api "repos/$MIHOMO_REPO/releases/latest" --jq .tag_name)
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "上游 $LATEST / 当前 ${CURRENT:-未知}"
+
+          CHANGED=true
+          if [ "$LATEST" = "$CURRENT" ] && [ "$FORCE" != "true" ]; then
+            CHANGED=false
+          elif [ "${{ github.event_name }}" = "schedule" ] && [ "$FORCE" != "true" ] && [ -n "$CURRENT" ]; then
+            # 定时任务只接受同 minor 的 patch 级升级，跨 minor / major 需手动 dispatch
+            L_MM=$(echo "${LATEST#v}" | cut -d. -f1,2)
+            C_MM=$(echo "${CURRENT#v}" | cut -d. -f1,2)
+            if [ "$L_MM" != "$C_MM" ]; then
+              echo "::notice::上游 $LATEST 跨 minor（当前 $CURRENT），定时任务不自动升级；如需升级请手动触发并勾选 force"
+              CHANGED=false
+            fi
+          fi
+
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
+          echo "changed=$CHANGED"
+
+      - name: Download and verify
+        if: steps.ver.outputs.changed == 'true'
+        env:
+          LATEST: ${{ steps.ver.outputs.latest }}
+        run: |
+          set -euo pipefail
+          # v1 = GOAMD64 基线，避免 v2/v3 变体在部分 runner 上 SIGILL
+          ASSET="mihomo-linux-amd64-v1-${LATEST}.gz"
+          if ! gh api "repos/$MIHOMO_REPO/releases/latest" --jq '.assets[].name' | grep -Fxq "$ASSET"; then
+            echo "::error::上游未找到预期资产 $ASSET（命名规则可能已变更），终止，不覆盖现有内核"
+            gh api "repos/$MIHOMO_REPO/releases/latest" --jq '.assets[].name' | grep -i 'linux-amd64' || true
+            exit 1
+          fi
+          mkdir -p dist
+          gh release download "$LATEST" -R "$MIHOMO_REPO" -p "$ASSET" -O dist/mihomo.gz
+          gunzip -c dist/mihomo.gz > dist/mihomo-linux-amd64
+          chmod +x dist/mihomo-linux-amd64
+          ./dist/mihomo-linux-amd64 -v
+          sha256sum dist/mihomo-linux-amd64
+
+      - name: Canary compile
+        if: steps.ver.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          ./dist/mihomo-linux-amd64 convert-ruleset domain yaml mihomo/domain/custom_ai.yaml /tmp/canary.mrs
+          test -s /tmp/canary.mrs
+          echo "canary ok: $(wc -c < /tmp/canary.mrs) bytes"
+
+      - name: Record digest
+        id: digest
+        if: steps.ver.outputs.changed == 'true'
+        run: echo "sha256=$(sha256sum dist/mihomo-linux-amd64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Publish kernel asset
+        if: steps.ver.outputs.changed == 'true'
+        run: gh release upload "$KERNEL_RELEASE" dist/mihomo-linux-amd64 --clobber
+
+  singbox:
+    needs: prepare
+    if: |
+      needs.prepare.result == 'success' &&
+      (github.event_name == 'schedule' ||
+       github.event.inputs.kernel == 'all' ||
+       github.event.inputs.kernel == 'sing-box')
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.latest }}
+      changed: ${{ steps.ver.outputs.changed }}
+      sha256: ${{ steps.digest.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve upstream version
+        id: ver
+        env:
+          CURRENT: ${{ needs.prepare.outputs.singbox_current }}
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          set -uo pipefail
+          LATEST=$(gh api "repos/$SINGBOX_REPO/releases/latest" --jq .tag_name)
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "上游 $LATEST / 当前 ${CURRENT:-未知}"
+
+          CHANGED=true
+          if [ "$LATEST" = "$CURRENT" ] && [ "$FORCE" != "true" ]; then
+            CHANGED=false
+          elif [ "${{ github.event_name }}" = "schedule" ] && [ "$FORCE" != "true" ] && [ -n "$CURRENT" ]; then
+            L_MM=$(echo "${LATEST#v}" | cut -d. -f1,2)
+            C_MM=$(echo "${CURRENT#v}" | cut -d. -f1,2)
+            if [ "$L_MM" != "$C_MM" ]; then
+              echo "::notice::上游 $LATEST 跨 minor（当前 $CURRENT），定时任务不自动升级；如需升级请手动触发并勾选 force"
+              CHANGED=false
+            fi
+          fi
+
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
+          echo "changed=$CHANGED"
+
+      - name: Download and verify
+        if: steps.ver.outputs.changed == 'true'
+        env:
+          LATEST: ${{ steps.ver.outputs.latest }}
+        run: |
+          set -euo pipefail
+          # 默认（非 glibc/musl）变体的命名：sing-box-<ver>-linux-amd64.tar.gz
+          ASSET="sing-box-${LATEST#v}-linux-amd64.tar.gz"
+          if ! gh api "repos/$SINGBOX_REPO/releases/latest" --jq '.assets[].name' | grep -Fxq "$ASSET"; then
+            echo "::error::上游未找到预期资产 $ASSET（命名规则可能已变更），终止，不覆盖现有内核"
+            gh api "repos/$SINGBOX_REPO/releases/latest" --jq '.assets[].name' | grep -i 'linux-amd64' || true
+            exit 1
+          fi
+          mkdir -p dist
+          gh release download "$LATEST" -R "$SINGBOX_REPO" -p "$ASSET" -O dist/sing-box.tar.gz
+          tar -xzf dist/sing-box.tar.gz -C dist --strip-components=1
+          cp dist/sing-box dist/sing-box-linux-amd64
+          chmod +x dist/sing-box-linux-amd64
+          ./dist/sing-box-linux-amd64 version
+          sha256sum dist/sing-box-linux-amd64
+
+      - name: Canary compile
+        if: steps.ver.outputs.changed == 'true'
+        # 上游 tar 内含 libcronet.so（dlopen 用，非 DT_NEEDED，可缺省）。
+        # 这里刻意只拷贝单文件到干净目录，模拟下游 workflow 只有单资产的运行条件。
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/iso && mkdir -p /tmp/iso
+          cp dist/sing-box-linux-amd64 /tmp/iso/sing-box
+          cd /tmp/iso
+          ./sing-box version
+          ./sing-box rule-set compile -o /tmp/canary.srs "$GITHUB_WORKSPACE/singbox/rules/custom_direct.json"
+          test -s /tmp/canary.srs
+          echo "canary ok: $(wc -c < /tmp/canary.srs) bytes"
+
+      - name: Record digest
+        id: digest
+        if: steps.ver.outputs.changed == 'true'
+        run: echo "sha256=$(sha256sum dist/sing-box-linux-amd64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Publish kernel asset
+        if: steps.ver.outputs.changed == 'true'
+        run: gh release upload "$KERNEL_RELEASE" dist/sing-box-linux-amd64 --clobber
+
+  publish:
+    needs: [mihomo, singbox]
+    # 任一内核更新成功即汇总；两个都失败则无意义，直接失败
+    if: |
+      always() &&
+      (needs.mihomo.result == 'success' || needs.singbox.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide whether to publish
+        id: flag
+        env:
+          M_CHANGED: ${{ needs.mihomo.outputs.changed }}
+          S_CHANGED: ${{ needs.singbox.outputs.changed }}
+        run: |
+          set -uo pipefail
+          if [ "$M_CHANGED" = "true" ] || [ "$S_CHANGED" = "true" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "两个内核均无变化，跳过 manifest 与构建下发"
+          fi
+
+      - name: Update manifest
+        if: steps.flag.outputs.changed == 'true'
+        env:
+          M_VER: ${{ needs.mihomo.outputs.version }}
+          M_SHA: ${{ needs.mihomo.outputs.sha256 }}
+          S_VER: ${{ needs.singbox.outputs.version }}
+          S_SHA: ${{ needs.singbox.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p .manifest
+          if ! gh release download "$KERNEL_RELEASE" -p "$MANIFEST_ASSET" -D .manifest --clobber 2>/dev/null; then
+            echo '{"mihomo":"","sing-box":"","updated_at":null,"assets":{}}' > ".manifest/$MANIFEST_ASSET"
+          fi
+          TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          jq --arg mv "$M_VER" --arg ms "$M_SHA" \
+             --arg sv "$S_VER" --arg ss "$S_SHA" --arg ts "$TS" '
+            .assets = (.assets // {}) |
+            (if $mv != "" then .mihomo = $mv else . end) |
+            (if $ms != "" then .assets.mihomo = {sha256: $ms} else . end) |
+            (if $sv != "" then .["sing-box"] = $sv else . end) |
+            (if $ss != "" then .assets["sing-box"] = {sha256: $ss} else . end) |
+            .updated_at = $ts
+          ' ".manifest/$MANIFEST_ASSET" > ".manifest/$MANIFEST_ASSET.tmp"
+          mv ".manifest/$MANIFEST_ASSET.tmp" ".manifest/$MANIFEST_ASSET"
+          cat ".manifest/$MANIFEST_ASSET"
+          gh release upload "$KERNEL_RELEASE" ".manifest/$MANIFEST_ASSET" --clobber
+
+      # GITHUB_TOKEN 产生的 release/push 事件不会触发其它 workflow（反递归），必须显式 dispatch
+      - name: Dispatch rebuild
+        if: steps.flag.outputs.changed == 'true'
+        env:
+          M_CHANGED: ${{ needs.mihomo.outputs.changed }}
+          S_CHANGED: ${{ needs.singbox.outputs.changed }}
+        run: |
+          set -euo pipefail
+          if [ "$M_CHANGED" = "true" ]; then
+            gh workflow run build-mihomo.yml --ref main -f build_all=true
+            echo "已触发 Build mihomo Ruleset"
+          fi
+          if [ "$S_CHANGED" = "true" ]; then
+            gh workflow run build-singbox.yml --ref main -f build_all=true
+            echo "已触发 Build sing-box Ruleset"
+          fi
+
+      - name: Summary
+        if: always()
+        env:
+          M_VERSION: ${{ needs.mihomo.outputs.version }}
+          M_CHANGED: ${{ needs.mihomo.outputs.changed }}
+          M_RESULT: ${{ needs.mihomo.result }}
+          M_SHA: ${{ needs.mihomo.outputs.sha256 }}
+          S_VERSION: ${{ needs.singbox.outputs.version }}
+          S_CHANGED: ${{ needs.singbox.outputs.changed }}
+          S_RESULT: ${{ needs.singbox.result }}
+          S_SHA: ${{ needs.singbox.outputs.sha256 }}
+        run: |
+          {
+            echo "## 内核更新结果"
+            echo ""
+            echo "| 内核 | 上游最新 | 是否更新 | 结果 | SHA256 |"
+            echo "|---|---|---|---|---|"
+            echo "| mihomo | ${M_VERSION:-n/a} | ${M_CHANGED:-false} | ${M_RESULT} | ${M_SHA:-未变化} |"
+            echo "| sing-box | ${S_VERSION:-n/a} | ${S_CHANGED:-false} | ${S_RESULT} | ${S_SHA:-未变化} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if any kernel update failed
+        if: needs.mihomo.result == 'failure' || needs.singbox.result == 'failure'
+        run: |
+          echo "::error::至少一个内核更新失败，请检查上方日志（可能原因：上游资产命名变更 / 上游回归导致 canary 编译失败）"
+          exit 1
