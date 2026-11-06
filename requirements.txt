@@ -1,2 +1,2 @@
 # 本地/CI 校验规则文件所需（构建 workflow 与 scripts/validate_rules.py 共用）
-pyyaml>=6.0
+pyyaml>=6.0.3
