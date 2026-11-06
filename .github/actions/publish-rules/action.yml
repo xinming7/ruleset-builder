@@ -59,14 +59,19 @@ runs:
 
         # 1. 拷贝本次产物
         mkdir -p "$RULES/$DIR"
+        if [ ! -d "$ARTIFACT_DIR" ]; then
+          echo "::error::产物目录 ${ARTIFACT_DIR} 不存在（下载/编译步骤可能失败或被清理），拒绝发布"
+          exit 1
+        fi
         copied=0
         while IFS= read -r f; do
           cp "$f" "$RULES/$DIR/"
           copied=$((copied + 1))
         done < <(find "$ARTIFACT_DIR" -type f -name "*.${EXT}")
         if [ "$copied" -eq 0 ]; then
-          echo "未找到 .${EXT} 产物，跳过发布"
-          exit 0
+          # 走到这里说明构建被判成功却没有产物，属于流水线自身缺陷，必须红灯暴露
+          echo "::error::未在 ${ARTIFACT_DIR} 找到任何 .${EXT} 产物，拒绝发布"
+          exit 1
         fi
         echo "复制 ${copied} 个 .${EXT} 到 ${DIR}/"
 
