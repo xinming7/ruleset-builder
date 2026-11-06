@@ -9,5 +9,7 @@
 #   rules/singbox/v2fly-google.srs ->  v2fly-google
 #
 # 以 # 开头的行与空行会被忽略；名字对 mihomo / sing-box 两侧同时生效。
-#
-# 当前状态：空（即允许清理 main 上已无源文件的全部遗留产物）
+
+# v2fly-google.srs 在 main 的 git 历史里从未有过源文件（早期手工上传的历史遗留），
+# 仍被外部引用，故显式保留；如确认无人使用可删掉本行让它被自动清理。
+v2fly-google
