@@ -185,7 +185,7 @@ jobs:
 
       # 不合并 artifact：按行为分目录保存，同名产物才可能被检测到而不是静默覆盖
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: false
