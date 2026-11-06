@@ -166,6 +166,7 @@ rules:
 - mihomo 固定取 GOAMD64 **v1** 变体（`-v1-`），避免 `v2`/`v3` 在部分 runner 上 SIGILL
 - `GITHUB_TOKEN` 产生的 release/push 事件不会触发其它 workflow，因此必须显式 `gh workflow run` 下发重建
 - 资产被 `--clobber` 覆盖后旧二进制不在 Release 中保留（不可回溯），历史版本只存在于上游
+- Release **描述**由本 workflow 按 manifest 重渲染（顶部带"自动生成"标记），每次运行都会覆盖，不要手工改
 
 回滚方式：从上游下载对应旧版本资产后手工覆盖，并同步修正 manifest。
 

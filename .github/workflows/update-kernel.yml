@@ -280,6 +280,47 @@ jobs:
           cat ".manifest/$MANIFEST_ASSET"
           gh release upload "$KERNEL_RELEASE" ".manifest/$MANIFEST_ASSET" --clobber
 
+      # 描述始终按 manifest 重渲染：即使本次内核无变化也执行，避免描述与资产漂移
+      - name: Update release notes
+        run: |
+          set -euo pipefail
+          mkdir -p .notes
+          if ! gh release download "$KERNEL_RELEASE" -p "$MANIFEST_ASSET" -D .notes --clobber 2>/dev/null; then
+            echo "::warning::读取不到 $MANIFEST_ASSET，跳过描述更新"
+            exit 0
+          fi
+          MF=".notes/$MANIFEST_ASSET"
+          MV=$(jq -r '.mihomo // "未知"' "$MF")
+          SV=$(jq -r '."sing-box" // "未知"' "$MF")
+          MS=$(jq -r '.assets.mihomo.sha256 // "未知"' "$MF")
+          SS=$(jq -r '.assets["sing-box"].sha256 // "未知"' "$MF")
+          TS=$(jq -r '.updated_at // "未知"' "$MF")
+
+          cat > .notes/body.md <<EOF
+          <!-- 本描述由 .github/workflows/update-kernel.yml 自动生成，请勿手工修改 -->
+
+          构建内核的**固定名资产**，由 [Update Kernel](https://github.com/xinming7/ruleset-builder/actions/workflows/update-kernel.yml) 每周从上游自动同步，构建 workflow 直接按固定 URL 拉取。
+
+          | 内核 | 版本 | 平台 | SHA256 |
+          |---|---|---|---|
+          | mihomo | $MV | linux-amd64 (GOAMD64 v1) | \`$MS\` |
+          | sing-box | $SV | linux-amd64 | \`$SS\` |
+
+          | 资产 | 用途 |
+          |---|---|
+          | \`mihomo-linux-amd64\` | \`convert-ruleset\`，把 \`mihomo/**.yaml\` 编译成 \`.mrs\` |
+          | \`sing-box-linux-amd64\` | \`rule-set compile\`，把 \`singbox/rules/*.json\` 编译成 \`.srs\` |
+          | \`kernel-manifest.json\` | 版本 / SHA256 / 更新时间，供 workflow 比对与追溯 |
+
+          最后更新：$TS
+
+          上游：mihomo <https://github.com/MetaCubeX/mihomo> · sing-box <https://github.com/SagerNet/sing-box>
+          EOF
+
+          echo "--- 生成的描述 ---"
+          cat .notes/body.md
+          gh release edit "$KERNEL_RELEASE" --notes-file .notes/body.md
+          echo "描述已更新"
       # GITHUB_TOKEN 产生的 release/push 事件不会触发其它 workflow（反递归），必须显式 dispatch
       - name: Dispatch rebuild
         if: steps.flag.outputs.changed == 'true'
