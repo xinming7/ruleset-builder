@@ -6,7 +6,7 @@ on:
       - "singbox/**/*.json"
     branches: [main]
   schedule:
-    - cron: '0 3 * * 1'  # 每周一 UTC 03:00（北京时间 11:00）
+    - cron: '10 3 * * 1'  # 每周一 UTC 03:10（北京时间 11:10），与 mihomo 的 03:00 错峰
   workflow_dispatch:
     inputs:
       files:
@@ -18,9 +18,6 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: write
-
 concurrency:
   group: push-to-rules
   cancel-in-progress: false
@@ -28,6 +25,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,46 +35,91 @@ jobs:
 
       - name: Find target files
         id: files
+        env:
+          FILES_INPUT: ${{ github.event.inputs.files }}
+          BUILD_ALL: ${{ github.event.inputs.build_all }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          FILES=""
-          if [ "${{ github.event.inputs.build_all }}" = "true" ] || [ "${{ github.event_name }}" = "schedule" ]; then
-            for f in singbox/rules/*.json; do
-              [ -f "$f" ] && FILES="$FILES $f"
-            done
-          elif [ -n "${{ github.event.inputs.files }}" ]; then
-            for fname in ${{ github.event.inputs.files }}; do
+          set -uo pipefail
+          declare -a TARGETS=()
+
+          if [ "$BUILD_ALL" = "true" ] || [ "${{ github.event_name }}" = "schedule" ]; then
+            mapfile -t TARGETS < <(find singbox/rules -maxdepth 1 -name '*.json' | sort)
+          elif [ -n "${FILES_INPUT:-}" ]; then
+            read -ra NAMES <<< "$FILES_INPUT"
+            for fname in "${NAMES[@]}"; do
               fpath="singbox/rules/$fname"
               if [ -f "$fpath" ]; then
-                FILES="$FILES $fpath"
+                TARGETS+=("$fpath")
+              else
+                echo "::warning::指定的文件不存在，已忽略: $fname"
               fi
             done
           else
-            CHANGED=$(git diff --name-only HEAD~1 HEAD -- "singbox/rules/" 2>/dev/null || git diff --name-only HEAD -- "singbox/rules/")
-            for f in $CHANGED; do
-              if [[ "$f" == *.json ]]; then
-                [ -f "$f" ] && FILES="$FILES $f"
-              fi
+            # 用 push 事件的 base commit 做全区间 diff；HEAD~1 只能看到最后一个 commit，会漏检
+            if [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+               && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+              mapfile -t CHANGED < <(git diff --name-only "$BEFORE" HEAD -- 'singbox/rules/' || true)
+            else
+              # force-push / rebase 后 base commit 可能不存在，宁可全量重建也不漏检
+              echo "::notice::base commit 不可用（${BEFORE:-空}），按全量重建处理"
+              mapfile -t CHANGED < <(find singbox/rules -maxdepth 1 -name '*.json' | sort)
+            fi
+            for f in "${CHANGED[@]}"; do
+              [[ "$f" == *.json ]] || continue
+              [ -f "$f" ] || continue
+              TARGETS+=("$f")
             done
           fi
-          if [ -z "$FILES" ]; then
+
+          if [ "${#TARGETS[@]}" -eq 0 ]; then
             echo "has_files=false" >> "$GITHUB_OUTPUT"
+            echo "files=" >> "$GITHUB_OUTPUT"
+            echo "没有需要编译的文件"
           else
+            FILES="${TARGETS[*]}"
             echo "has_files=true" >> "$GITHUB_OUTPUT"
+            echo "files=$FILES" >> "$GITHUB_OUTPUT"
+            echo "Target files: $FILES"
           fi
-          echo "files=$FILES" >> "$GITHUB_OUTPUT"
-          echo "Target files: $FILES"
 
       - name: Download sing-box from release
         if: steps.files.outputs.has_files == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -sL "https://github.com/xinming7/ruleset-builder/releases/download/kernel-v1/sing-box-linux-amd64" -o sing-box
+          set -euo pipefail
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/kernel-v1/sing-box-linux-amd64" -o sing-box
           chmod +x sing-box
+
+          # 与 kernel-manifest.json 里记录的 SHA256 比对，防止资产被误覆盖或下载截断
+          mkdir -p .kernel
+          if gh release download kernel-v1 -p kernel-manifest.json -D .kernel --clobber 2>/dev/null; then
+            EXPECTED=$(jq -r '.assets["sing-box"].sha256 // ""' .kernel/kernel-manifest.json)
+            if [ -n "$EXPECTED" ]; then
+              ACTUAL=$(sha256sum sing-box | awk '{print $1}')
+              if [ "$ACTUAL" != "$EXPECTED" ]; then
+                echo "::error::内核 SHA256 不匹配（期望 $EXPECTED / 实际 $ACTUAL），请检查 kernel-v1 资产"
+                exit 1
+              fi
+              echo "SHA256 校验通过: $ACTUAL"
+            else
+              echo "::warning::manifest 中缺少 sing-box 的 SHA256，跳过校验"
+            fi
+          else
+            echo "::warning::取不到 kernel-manifest.json，跳过 SHA256 校验"
+          fi
+
           ./sing-box version
 
       - name: Validate json files
         if: steps.files.outputs.has_files == 'true'
+        env:
+          TARGETS: ${{ steps.files.outputs.files }}
         run: |
-          for f in ${{ steps.files.outputs.files }}; do
+          set -uo pipefail
+          read -ra LIST <<< "$TARGETS"
+          for f in "${LIST[@]}"; do
             echo "Validating $f ..."
             python3 -c "import json; json.load(open('$f'))" || { echo "ERROR: $f JSON 语法错误"; exit 1; }
           done
@@ -82,9 +127,13 @@ jobs:
 
       - name: Compile rule-sets
         if: steps.files.outputs.has_files == 'true'
+        env:
+          TARGETS: ${{ steps.files.outputs.files }}
         run: |
+          set -euo pipefail
           mkdir -p output
-          for f in ${{ steps.files.outputs.files }}; do
+          read -ra LIST <<< "$TARGETS"
+          for f in "${LIST[@]}"; do
             name=$(basename "$f" .json)
             echo "Compiling $f -> output/${name}.srs"
             ./sing-box rule-set compile -o "output/${name}.srs" "$f"
@@ -97,81 +146,14 @@ jobs:
           name: srs-rulesets
           path: output/*.srs
 
-      # 清理孤儿产物需要知道 main 上现存哪些源文件，因此额外 checkout 一份源码树
-      - name: Checkout source tree
+      - name: Publish to rules branch
         if: steps.files.outputs.has_files == 'true'
-        uses: actions/checkout@v4
+        uses: ./.github/actions/publish-rules
         with:
-          ref: main
-          path: src-repo
-          fetch-depth: 1
-
-      - name: Checkout rules branch
-        if: steps.files.outputs.has_files == 'true'
-        uses: actions/checkout@v4
-        with:
-          ref: rules
-          path: rules-repo
-          fetch-depth: 1
-        continue-on-error: true
-        id: checkout-rules
-
-      - name: Init rules branch if not exists
-        if: steps.files.outputs.has_files == 'true' && steps.checkout-rules.outcome == 'failure'
-        run: |
-          rm -rf rules-repo
-          mkdir -p rules-repo
-          cd rules-repo
-          git init
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b rules
-          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-          cp "${{ github.workspace }}/rules-README.md" README.md
-          git add README.md
-          git commit -m "chore: init rules branch with README [skip ci]"
-
-      - name: Push to rules branch
-        if: steps.files.outputs.has_files == 'true'
-        run: |
-          mkdir -p rules-repo/singbox
-          cp output/*.srs rules-repo/singbox/
-
-          # 清理孤儿产物：rules 分支上存在、但 singbox/rules 下已无同名 .json 的 .srs
-          # .github/keep-rulesets.txt 可显式保留（每行一个名字，忽略 # 注释与空行）
-          KEEP_FILE="src-repo/.github/keep-rulesets.txt"
-          : > "$RUNNER_TEMP/keep.txt"
-          if [ -f "$KEEP_FILE" ]; then
-            sed -e 's/#.*//' -e 's/[[:space:]]//g' "$KEEP_FILE" | grep -v '^$' > "$RUNNER_TEMP/keep.txt" || true
-          fi
-
-          find src-repo/singbox/rules -type f -name '*.json' -printf '%f\n' \
-            | sed -E 's/\.json$//' | sort -u > "$RUNNER_TEMP/expected-singbox.txt"
-          if [ ! -s "$RUNNER_TEMP/expected-singbox.txt" ]; then
-            echo "::error::未能从 src-repo/singbox/rules 解析出源文件名，跳过清理以免误删全部产物"
-          else
-            while IFS= read -r f; do
-              name=$(basename "$f" .srs)
-              if grep -Fxq "$name" "$RUNNER_TEMP/expected-singbox.txt"; then
-                continue
-              fi
-              if grep -Fxq "$name" "$RUNNER_TEMP/keep.txt"; then
-                echo "保留孤儿产物: singbox/$(basename "$f")（命中 keep-rulesets.txt）"
-                continue
-              fi
-              echo "删除孤儿产物: singbox/$(basename "$f")（singbox/rules 下已无对应源文件）"
-              rm -f "$f"
-            done < <(find rules-repo/singbox -maxdepth 1 -name '*.srs')
-          fi
-
-          if ! ls rules-repo/singbox/*.srs 2>/dev/null | head -1 > /dev/null; then
-            echo "No .srs files to commit"
-            exit 0
-          fi
-
-          cd rules-repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A singbox/
-          git diff --cached --quiet || git commit -m "chore: update sing-box rulesets [skip ci]"
-          git push --set-upstream origin rules
+          dir: singbox
+          source-dir: singbox/rules
+          source-patterns: "*.json"
+          ext: srs
+          artifact-dir: output
+          message: "chore: update sing-box rulesets [skip ci]"
+          token: ${{ github.token }}

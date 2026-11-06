@@ -1,0 +1,143 @@
+name: Publish rulesets
+description: |
+  把编译产物提交到 `rules` 孤儿分支：同步分支 README、清理孤儿产物、
+  产物与源文件不一致时给出提示，并在推送冲突时重试。
+
+  mihomo / sing-box 两个构建流程共用，避免同一段发布逻辑维护两份。
+
+inputs:
+  dir:
+    description: 产物目录名（mihomo / singbox）
+    required: true
+  source-dir:
+    description: 源文件目录（相对仓库根，如 mihomo 或 singbox/rules）
+    required: true
+  source-patterns:
+    description: 源文件 find -name 模式，空格分隔（如 "*.yaml *.txt"）
+    required: true
+  ext:
+    description: 产物扩展名，不含点（mrs / srs）
+    required: true
+  artifact-dir:
+    description: 待发布产物所在目录
+    required: true
+  message:
+    description: 提交信息
+    required: true
+  token:
+    description: 具备 contents:write 的 token
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Publish
+      shell: bash
+      env:
+        DIR: ${{ inputs.dir }}
+        SOURCE_DIR: ${{ inputs['source-dir'] }}
+        SOURCE_PATTERNS: ${{ inputs['source-patterns'] }}
+        EXT: ${{ inputs.ext }}
+        ARTIFACT_DIR: ${{ inputs['artifact-dir'] }}
+        MESSAGE: ${{ inputs.message }}
+        TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+
+        WORK="$(mktemp -d)"
+        REMOTE="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+        RULES="$WORK/rules"
+
+        if git ls-remote --exit-code --heads "$REMOTE" rules >/dev/null 2>&1; then
+          git clone --quiet --depth 1 --branch rules "$REMOTE" "$RULES"
+        else
+          echo "rules 分支不存在，初始化孤儿分支"
+          git init --quiet "$RULES"
+          git -C "$RULES" checkout --quiet -b rules
+          git -C "$RULES" remote add origin "$REMOTE"
+        fi
+
+        # 1. 拷贝本次产物
+        mkdir -p "$RULES/$DIR"
+        copied=0
+        while IFS= read -r f; do
+          cp "$f" "$RULES/$DIR/"
+          copied=$((copied + 1))
+        done < <(find "$ARTIFACT_DIR" -type f -name "*.${EXT}")
+        if [ "$copied" -eq 0 ]; then
+          echo "未找到 .${EXT} 产物，跳过发布"
+          exit 0
+        fi
+        echo "复制 ${copied} 个 .${EXT} 到 ${DIR}/"
+
+        # 2. 分支 README 跟随源码同步（之前只在初始化时拷贝一次）
+        cp "$GITHUB_WORKSPACE/rules-README.md" "$RULES/README.md"
+
+        # 3. keep 清单（显式保留、但 main 上没有源文件的产物）
+        KEEP="$WORK/keep.txt"
+        : > "$KEEP"
+        if [ -f "$GITHUB_WORKSPACE/.github/keep-rulesets.txt" ]; then
+          sed -e 's/#.*//' -e 's/[[:space:]]//g' "$GITHUB_WORKSPACE/.github/keep-rulesets.txt" \
+            | grep -v '^$' | sort -u > "$KEEP" || true
+        fi
+
+        # 4. 期望集合：main 上现存的源文件名（去扩展名）
+        EXPECTED="$WORK/expected.txt"
+        : > "$EXPECTED"
+        read -ra PATTERNS <<< "$SOURCE_PATTERNS"
+        for pat in "${PATTERNS[@]}"; do
+          find "$GITHUB_WORKSPACE/$SOURCE_DIR" -type f -name "$pat"
+        done | sed -E 's#.*/##; s/\.[A-Za-z0-9]+$//' | sort -u > "$EXPECTED"
+
+        if [ ! -s "$EXPECTED" ]; then
+          # 解析不到源文件说明布局异常，宁可不动任何产物
+          echo "::error::未能从 ${SOURCE_DIR} 解析出源文件名，跳过清理以免误删全部产物"
+        else
+          # 5a. 清理孤儿产物
+          while IFS= read -r f; do
+            name="$(basename "$f" ".${EXT}")"
+            if grep -Fxq "$name" "$EXPECTED"; then
+              continue
+            fi
+            if grep -Fxq "$name" "$KEEP"; then
+              echo "保留孤儿产物: ${DIR}/$(basename "$f")（命中 keep-rulesets.txt）"
+              continue
+            fi
+            echo "删除孤儿产物: ${DIR}/$(basename "$f")（main 上已无对应源文件）"
+            rm -f "$f"
+          done < <(find "$RULES/$DIR" -maxdepth 1 -name "*.${EXT}")
+
+          # 5b. 反向提示：源文件暂无产物（本次只编译了部分 behavior 时属正常，仅提示）
+          find "$RULES/$DIR" -maxdepth 1 -name "*.${EXT}" -printf '%f\n' \
+            | sed -E "s/\.${EXT}\$//" | sort -u > "$WORK/published.txt"
+          MISSING="$(comm -23 "$EXPECTED" "$WORK/published.txt" || true)"
+          if [ -n "$MISSING" ]; then
+            echo "::warning::${DIR} 以下源文件暂无产物（可能是本次未编译该 behavior）：$(echo "$MISSING" | tr '\n' ' ')"
+          fi
+        fi
+
+        # 6. 提交并推送（并发时重试一次 rebase）
+        cd "$RULES"
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add -A "$DIR/" README.md
+        if git diff --cached --quiet; then
+          echo "产物与 README 均无变化，无需提交"
+          exit 0
+        fi
+        git commit --quiet -m "$MESSAGE"
+
+        pushed=0
+        for attempt in 1 2 3; do
+          if git push --quiet --set-upstream origin rules; then
+            pushed=1
+            break
+          fi
+          echo "推送失败（第 ${attempt} 次），尝试 rebase 后重试"
+          git pull --quiet --rebase --autostash origin rules || true
+        done
+        if [ "$pushed" -ne 1 ]; then
+          echo "::error::推送 rules 分支失败，请检查并发或其他流程是否正在写入"
+          exit 1
+        fi
+        echo "已推送 $(git rev-parse --short HEAD)"

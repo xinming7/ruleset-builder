@@ -1,0 +1,150 @@
+name: Validate
+
+# 只读校验流水线：语法 → 语义 → 发布契约。
+# 与构建流程解耦，任何一步失败都只报红，不会写入 rules 分支。
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - "mihomo/**"
+      - "singbox/**"
+      - ".github/**"
+      - "scripts/**"
+  schedule:
+    - cron: '0 4 * * *'  # 每天 UTC 04:00，在周一构建（03:00/03:10）之后
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-workflows:
+    name: Lint workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install actionlint (pinned)
+        env:
+          VERSION: 1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz" -o /tmp/actionlint.tgz
+          echo "${SHA256}  /tmp/actionlint.tgz" | sha256sum -c -
+          tar -xzf /tmp/actionlint.tgz -C /tmp actionlint
+          /tmp/actionlint --version
+
+      - name: Run actionlint
+        run: /tmp/actionlint -color .github/workflows/*.yml
+
+      - name: Parse all YAML / JSON
+        run: |
+          set -euo pipefail
+          pip install -q -r requirements.txt
+          python3 - <<'PY'
+          import json, sys, yaml
+          from pathlib import Path
+
+          bad = []
+          for p in sorted(Path(".github").rglob("*.yml")):
+              try:
+                  yaml.safe_load(p.read_text(encoding="utf-8"))
+              except Exception as exc:
+                  bad.append(f"{p}: {exc}")
+          for p in sorted(Path(".").glob("**/*.json")):
+              if ".git" in p.parts:
+                  continue
+              try:
+                  json.loads(p.read_text(encoding="utf-8"))
+              except Exception as exc:
+                  bad.append(f"{p}: {exc}")
+          for line in bad:
+              print(f"::error::{line}")
+          sys.exit(1 if bad else 0)
+          PY
+
+  validate-rules:
+    name: Validate rule semantics
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pyyaml
+        run: pip install -q -r requirements.txt
+
+      - name: Validate rules
+        run: python3 scripts/validate_rules.py -v
+
+  contract:
+    name: Check published artifacts
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Source/output contract
+        run: |
+          set -uo pipefail
+          # 源文件 ↔ rules 分支产物 逐侧（mihomo / singbox）双向比对；keep-rulesets.txt 里的名字豁免
+          KEEP="$(mktemp)"
+          sed -e 's/#.*//' -e 's/[[:space:]]//g' .github/keep-rulesets.txt 2>/dev/null | grep -v '^$' | sort -u > "$KEEP" || true
+
+          gh api "repos/${GITHUB_REPOSITORY}/git/trees/rules?recursive=1" \
+            --jq '.tree[] | select(.type=="blob") | .path' > /tmp/tree.txt
+
+          find mihomo/domain mihomo/ipcidr -type f \( -name '*.yaml' -o -name '*.txt' \) -printf '%f\n' \
+            | sed -E 's/\.(yaml|txt)$//' | sort -u > /tmp/src-mihomo.txt
+          grep -E '^mihomo/[^/]+\.mrs$' /tmp/tree.txt | sed -E 's#^mihomo/##; s/\.mrs$//' | sort -u > /tmp/out-mihomo.txt
+
+          find singbox/rules -type f -name '*.json' -printf '%f\n' \
+            | sed -E 's/\.json$//' | sort -u > /tmp/src-singbox.txt
+          grep -E '^singbox/[^/]+\.srs$' /tmp/tree.txt | sed -E 's#^singbox/##; s/\.srs$//' | sort -u > /tmp/out-singbox.txt
+
+          rc=0
+          check() {
+            local label="$1" src="$2" out="$3" missing orphan
+            missing=$(comm -23 "$src" "$out" || true)
+            orphan=$(comm -23 <(comm -13 "$src" "$out") "$KEEP" || true)
+            echo "== ${label}: 源 $(wc -l < "$src") 个 / 产物 $(wc -l < "$out") 个"
+            if [ -n "$missing" ]; then
+              echo "::error::${label} 缺少产物（构建失败或未触发）：$(echo "$missing" | tr '\n' ' ')"
+              rc=1
+            fi
+            if [ -n "$orphan" ]; then
+              echo "::error::${label} 存在孤儿产物（main 无同名源文件，且不在 keep 清单）：$(echo "$orphan" | tr '\n' ' ')"
+              rc=1
+            fi
+          }
+          check mihomo /tmp/src-mihomo.txt /tmp/out-mihomo.txt
+          check singbox /tmp/src-singbox.txt /tmp/out-singbox.txt
+          exit "$rc"
+
+      - name: Reachability of published URLs
+        run: |
+          set -uo pipefail
+          BASE="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/rules"
+          fail=0
+          n=0
+          while IFS= read -r path; do
+            n=$((n + 1))
+            code=$(curl -s -o /dev/null -w '%{http_code}' -L "$BASE/$path")
+            if [ "$code" != "200" ]; then
+              echo "::error::$BASE/$path -> HTTP $code"
+              fail=$((fail + 1))
+            fi
+          done < <(gh api "repos/${GITHUB_REPOSITORY}/git/trees/rules?recursive=1" \
+                     --jq '.tree[] | select(.type=="blob") | .path' | grep -E '\.(mrs|srs)$')
+          echo "检查 $n 个 URL，失败 $fail 个"
+          [ "$fail" -eq 0 ]

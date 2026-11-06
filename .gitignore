@@ -10,3 +10,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# 内核下载/校验的中间产物（scripts/fetch-kernel.sh 本地运行时生成）
+dist/
+.kernel/

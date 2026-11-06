@@ -11,11 +11,12 @@ on:
   workflow_dispatch:
     inputs:
       behavior:
-        description: "规则类型 (domain/ipcidr)，留空则全部"
+        description: "规则类型"
         required: false
         type: choice
+        default: all
         options:
-          - ""
+          - all
           - domain
           - ipcidr
       build_all:
@@ -24,9 +25,6 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: write
-
 concurrency:
   group: push-to-rules
   cancel-in-progress: false
@@ -34,6 +32,9 @@ concurrency:
 jobs:
   detect:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       has_changes: ${{ steps.set-matrix.outputs.has_changes }}
@@ -44,22 +45,32 @@ jobs:
 
       - name: Detect changed files
         id: set-matrix
+        env:
+          MODE: ${{ github.event.inputs.behavior }}
+          BUILD_ALL: ${{ github.event.inputs.build_all }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          BEHAVIORS="[]"
-          HAS_CHANGES="false"
+          set -uo pipefail
+          BEHAVIORS='[]'
+          HAS_CHANGES=false
 
-          if [ "${{ github.event.inputs.build_all }}" = "true" ] || [ "${{ github.event_name }}" = "schedule" ]; then
-            if [ -n "${{ github.event.inputs.behavior }}" ]; then
-              BEHAVIORS='["${{ github.event.inputs.behavior }}"]'
-            else
-              BEHAVIORS='["domain","ipcidr"]'
-            fi
-            HAS_CHANGES="true"
-          elif [ -n "${{ github.event.inputs.behavior }}" ]; then
-            BEHAVIORS='["${{ github.event.inputs.behavior }}"]'
-            HAS_CHANGES="true"
+          if [ "$BUILD_ALL" = "true" ] || [ "${{ github.event_name }}" = "schedule" ] || [ -n "${MODE:-}" ]; then
+            case "${MODE:-all}" in
+              all|"") BEHAVIORS='["domain","ipcidr"]' ;;
+              domain|ipcidr) BEHAVIORS=$(jq -c -n --arg b "$MODE" '[$b]') ;;
+              *) echo "::error::未知 behavior 取值: $MODE"; exit 1 ;;
+            esac
+            HAS_CHANGES=true
           else
-            CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'mihomo/' 2>/dev/null || git diff --name-only HEAD -- 'mihomo/')
+            # 用 push 事件的 base commit 做全区间 diff；HEAD~1 只能看到最后一个 commit，会漏检
+            if [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+               && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+              CHANGED=$(git diff --name-only "$BEFORE" HEAD -- 'mihomo/' || true)
+            else
+              # force-push / rebase 后 base commit 可能不存在，宁可全量重建也不漏检
+              echo "::notice::base commit 不可用（${BEFORE:-空}），按全量重建处理"
+              CHANGED="mihomo/domain/ mihomo/ipcidr/"
+            fi
             for beh in domain ipcidr; do
               if echo "$CHANGED" | grep -q "^mihomo/$beh/"; then
                 BEHAVIORS=$(echo "$BEHAVIORS" | jq -c --arg b "$beh" '. + [$b] | unique')
@@ -78,22 +89,47 @@ jobs:
     needs: detect
     if: needs.detect.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     strategy:
       matrix: ${{ fromJson(needs.detect.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Download mihomo from release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -sL "https://github.com/xinming7/ruleset-builder/releases/download/kernel-v1/mihomo-linux-amd64" -o mihomo-bin
+          set -euo pipefail
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/kernel-v1/mihomo-linux-amd64" -o mihomo-bin
           chmod +x mihomo-bin
+
+          # 与 kernel-manifest.json 里记录的 SHA256 比对，防止资产被误覆盖或下载截断
+          mkdir -p .kernel
+          if gh release download kernel-v1 -p kernel-manifest.json -D .kernel --clobber 2>/dev/null; then
+            EXPECTED=$(jq -r '.assets.mihomo.sha256 // ""' .kernel/kernel-manifest.json)
+            if [ -n "$EXPECTED" ]; then
+              ACTUAL=$(sha256sum mihomo-bin | awk '{print $1}')
+              if [ "$ACTUAL" != "$EXPECTED" ]; then
+                echo "::error::内核 SHA256 不匹配（期望 $EXPECTED / 实际 $ACTUAL），请检查 kernel-v1 资产"
+                exit 1
+              fi
+              echo "SHA256 校验通过: $ACTUAL"
+            else
+              echo "::warning::manifest 中缺少 mihomo.sha256，跳过校验"
+            fi
+          else
+            echo "::warning::取不到 kernel-manifest.json，跳过 SHA256 校验"
+          fi
+
           ./mihomo-bin -v
 
       - name: Validate yaml/txt files
         run: |
-          pip install pyyaml -q
+          pip install -q -r requirements.txt
           BEHAVIOR=${{ matrix.behavior }}
-          for f in mihomo/$BEHAVIOR/*.yaml mihomo/$BEHAVIOR/*.txt; do
+          for f in mihomo/"$BEHAVIOR"/*.yaml mihomo/"$BEHAVIOR"/*.txt; do
             [ -f "$f" ] || continue
             echo "Validating $f ..."
             if [[ "$f" == *.yaml ]]; then
@@ -112,7 +148,7 @@ jobs:
         run: |
           mkdir -p output
           BEHAVIOR=${{ matrix.behavior }}
-          for f in mihomo/$BEHAVIOR/*.yaml mihomo/$BEHAVIOR/*.txt; do
+          for f in mihomo/"$BEHAVIOR"/*.yaml mihomo/"$BEHAVIOR"/*.txt; do
             [ -f "$f" ] || continue
             name=$(basename "$f" | sed 's/\.\(yaml\|txt\)$//')
             if [[ "$f" == *.txt ]]; then
@@ -132,88 +168,46 @@ jobs:
 
   commit:
     needs: build
-    if: always() && needs.build.result != 'skipped'
+    # 只在构建成功时发布：构建失败/部分失败时坚决不推，避免产物半新半旧
+    if: needs.build.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
+      # 不合并 artifact：按行为分目录保存，同名产物才可能被检测到而不是静默覆盖
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          merge-multiple: true
+          merge-multiple: false
 
-      # 清理孤儿产物需要知道 main 上现存哪些源文件，因此在 commit job 里额外 checkout 一份源码树
-      - name: Checkout source tree
+      - name: Detect artifact name collision
+        run: |
+          set -euo pipefail
+          # 产物文件名不含 behavior，domain 与 ipcidr 出现同名源文件时会互相覆盖
+          DUP=$(find artifacts -name '*.mrs' -printf '%f\n' | sort | uniq -d)
+          if [ -n "$DUP" ]; then
+            echo "::error::多个 behavior 产出了同名产物，会互相覆盖：$(echo "$DUP" | tr '\n' ' ')"
+            echo "请给 mihomo/domain 或 mihomo/ipcidr 下的源文件改名，保证 basename 唯一"
+            find artifacts -name '*.mrs' | sort
+            exit 1
+          fi
+          echo "产物清单:"
+          find artifacts -name '*.mrs' | sort
+
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: main
-          path: src-repo
           fetch-depth: 1
 
-      - name: Checkout rules branch
-        uses: actions/checkout@v4
+      - name: Publish to rules branch
+        uses: ./.github/actions/publish-rules
         with:
-          ref: rules
-          path: rules-repo
-          fetch-depth: 1
-        continue-on-error: true
-        id: checkout-rules
-
-      - name: Init rules branch if not exists
-        if: steps.checkout-rules.outcome == 'failure'
-        run: |
-          rm -rf rules-repo
-          mkdir -p rules-repo
-          cd rules-repo
-          git init
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b rules
-          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-          # 复制 README.md 到 rules 分支
-          cp "${{ github.workspace }}/rules-README.md" README.md
-          git add README.md
-          git commit -m "chore: init rules branch with README [skip ci]"
-
-      - name: Push to rules branch
-        run: |
-          mkdir -p rules-repo/mihomo
-          find artifacts -name "*.mrs" -exec cp {} rules-repo/mihomo/ \;
-
-          # 清理孤儿产物：rules 分支上存在、但 main 上已无同名源文件的 .mrs
-          # .github/keep-rulesets.txt 可显式保留（每行一个名字，忽略 # 注释与空行）
-          KEEP_FILE="src-repo/.github/keep-rulesets.txt"
-          : > "$RUNNER_TEMP/keep.txt"
-          if [ -f "$KEEP_FILE" ]; then
-            sed -e 's/#.*//' -e 's/[[:space:]]//g' "$KEEP_FILE" | grep -v '^$' > "$RUNNER_TEMP/keep.txt" || true
-          fi
-
-          find src-repo/mihomo -type f \( -name '*.yaml' -o -name '*.txt' \) -printf '%f\n' \
-            | sed -E 's/\.(yaml|txt)$//' | sort -u > "$RUNNER_TEMP/expected-mihomo.txt"
-          if [ ! -s "$RUNNER_TEMP/expected-mihomo.txt" ]; then
-            echo "::error::未能从 src-repo/mihomo 解析出源文件名，跳过清理以免误删全部产物"
-          else
-            while IFS= read -r f; do
-              name=$(basename "$f" .mrs)
-              if grep -Fxq "$name" "$RUNNER_TEMP/expected-mihomo.txt"; then
-                continue
-              fi
-              if grep -Fxq "$name" "$RUNNER_TEMP/keep.txt"; then
-                echo "保留孤儿产物: mihomo/$(basename "$f")（命中 keep-rulesets.txt）"
-                continue
-              fi
-              echo "删除孤儿产物: mihomo/$(basename "$f")（main 上已无对应源文件）"
-              rm -f "$f"
-            done < <(find rules-repo/mihomo -maxdepth 1 -name '*.mrs')
-          fi
-
-          if ! ls rules-repo/mihomo/*.mrs 2>/dev/null | head -1 > /dev/null; then
-            echo "No .mrs files to commit"
-            exit 0
-          fi
-
-          cd rules-repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A mihomo/
-          git diff --cached --quiet || git commit -m "chore: update mihomo rulesets [skip ci]"
-          git push --set-upstream origin rules
+          dir: mihomo
+          source-dir: mihomo
+          source-patterns: "*.yaml *.txt"
+          ext: mrs
+          artifact-dir: artifacts
+          message: "chore: update mihomo rulesets [skip ci]"
+          token: ${{ github.token }}
