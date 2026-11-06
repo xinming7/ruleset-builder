@@ -33,6 +33,8 @@
 
 产物存放在 `rules` 分支，与源码完全隔离，本地 push 不会影响产物。
 
+产物与源文件严格对应：删除源文件后，`rules` 分支上对应的孤儿产物会在下一次构建时**自动清理**（`mihomo/domain|ipcidr/*.yaml|txt` → `mihomo/<name>.mrs`，`singbox/rules/*.json` → `singbox/<name>.srs`）。若某个产物需要长期保留但 main 上没有对应源文件，把名字（产物文件名去掉扩展名）写进 [`.github/keep-rulesets.txt`](.github/keep-rulesets.txt)，每行一个。清理前会校验源文件集合非空，解析异常时只报错不删任何东西。
+
 ## 使用方法
 
 ### 1. 添加 mihomo 规则

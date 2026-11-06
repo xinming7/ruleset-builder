@@ -141,6 +141,14 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # 清理孤儿产物需要知道 main 上现存哪些源文件，因此在 commit job 里额外 checkout 一份源码树
+      - name: Checkout source tree
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: src-repo
+          fetch-depth: 1
+
       - name: Checkout rules branch
         uses: actions/checkout@v4
         with:
@@ -170,6 +178,34 @@ jobs:
         run: |
           mkdir -p rules-repo/mihomo
           find artifacts -name "*.mrs" -exec cp {} rules-repo/mihomo/ \;
+
+          # 清理孤儿产物：rules 分支上存在、但 main 上已无同名源文件的 .mrs
+          # .github/keep-rulesets.txt 可显式保留（每行一个名字，忽略 # 注释与空行）
+          KEEP_FILE="src-repo/.github/keep-rulesets.txt"
+          : > "$RUNNER_TEMP/keep.txt"
+          if [ -f "$KEEP_FILE" ]; then
+            sed -e 's/#.*//' -e 's/[[:space:]]//g' "$KEEP_FILE" | grep -v '^$' > "$RUNNER_TEMP/keep.txt" || true
+          fi
+
+          find src-repo/mihomo -type f \( -name '*.yaml' -o -name '*.txt' \) -printf '%f\n' \
+            | sed -E 's/\.(yaml|txt)$//' | sort -u > "$RUNNER_TEMP/expected-mihomo.txt"
+          if [ ! -s "$RUNNER_TEMP/expected-mihomo.txt" ]; then
+            echo "::error::未能从 src-repo/mihomo 解析出源文件名，跳过清理以免误删全部产物"
+          else
+            while IFS= read -r f; do
+              name=$(basename "$f" .mrs)
+              if grep -Fxq "$name" "$RUNNER_TEMP/expected-mihomo.txt"; then
+                continue
+              fi
+              if grep -Fxq "$name" "$RUNNER_TEMP/keep.txt"; then
+                echo "保留孤儿产物: mihomo/$(basename "$f")（命中 keep-rulesets.txt）"
+                continue
+              fi
+              echo "删除孤儿产物: mihomo/$(basename "$f")（main 上已无对应源文件）"
+              rm -f "$f"
+            done < <(find rules-repo/mihomo -maxdepth 1 -name '*.mrs')
+          fi
+
           if ! ls rules-repo/mihomo/*.mrs 2>/dev/null | head -1 > /dev/null; then
             echo "No .mrs files to commit"
             exit 0
@@ -178,6 +214,6 @@ jobs:
           cd rules-repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add mihomo/
+          git add -A mihomo/
           git diff --cached --quiet || git commit -m "chore: update mihomo rulesets [skip ci]"
           git push --set-upstream origin rules

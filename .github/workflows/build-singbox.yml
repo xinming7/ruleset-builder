@@ -97,6 +97,15 @@ jobs:
           name: srs-rulesets
           path: output/*.srs
 
+      # 清理孤儿产物需要知道 main 上现存哪些源文件，因此额外 checkout 一份源码树
+      - name: Checkout source tree
+        if: steps.files.outputs.has_files == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: src-repo
+          fetch-depth: 1
+
       - name: Checkout rules branch
         if: steps.files.outputs.has_files == 'true'
         uses: actions/checkout@v4
@@ -127,6 +136,34 @@ jobs:
         run: |
           mkdir -p rules-repo/singbox
           cp output/*.srs rules-repo/singbox/
+
+          # 清理孤儿产物：rules 分支上存在、但 singbox/rules 下已无同名 .json 的 .srs
+          # .github/keep-rulesets.txt 可显式保留（每行一个名字，忽略 # 注释与空行）
+          KEEP_FILE="src-repo/.github/keep-rulesets.txt"
+          : > "$RUNNER_TEMP/keep.txt"
+          if [ -f "$KEEP_FILE" ]; then
+            sed -e 's/#.*//' -e 's/[[:space:]]//g' "$KEEP_FILE" | grep -v '^$' > "$RUNNER_TEMP/keep.txt" || true
+          fi
+
+          find src-repo/singbox/rules -type f -name '*.json' -printf '%f\n' \
+            | sed -E 's/\.json$//' | sort -u > "$RUNNER_TEMP/expected-singbox.txt"
+          if [ ! -s "$RUNNER_TEMP/expected-singbox.txt" ]; then
+            echo "::error::未能从 src-repo/singbox/rules 解析出源文件名，跳过清理以免误删全部产物"
+          else
+            while IFS= read -r f; do
+              name=$(basename "$f" .srs)
+              if grep -Fxq "$name" "$RUNNER_TEMP/expected-singbox.txt"; then
+                continue
+              fi
+              if grep -Fxq "$name" "$RUNNER_TEMP/keep.txt"; then
+                echo "保留孤儿产物: singbox/$(basename "$f")（命中 keep-rulesets.txt）"
+                continue
+              fi
+              echo "删除孤儿产物: singbox/$(basename "$f")（singbox/rules 下已无对应源文件）"
+              rm -f "$f"
+            done < <(find rules-repo/singbox -maxdepth 1 -name '*.srs')
+          fi
+
           if ! ls rules-repo/singbox/*.srs 2>/dev/null | head -1 > /dev/null; then
             echo "No .srs files to commit"
             exit 0
@@ -135,6 +172,6 @@ jobs:
           cd rules-repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add singbox/
+          git add -A singbox/
           git diff --cached --quiet || git commit -m "chore: update sing-box rulesets [skip ci]"
           git push --set-upstream origin rules

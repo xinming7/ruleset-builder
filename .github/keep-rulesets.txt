@@ -1,0 +1,13 @@
+# 孤儿产物保留清单
+#
+# rules 分支上的产物默认与 main 上的源文件一一对应：源文件删除后，对应产物会在
+# 下一次构建时被自动清理（delete）。如果某个产物需要长期保留、但 main 上没有
+# 对应源文件（例如历史遗留或手工维护），把它的名字写在这里，每行一个。
+#
+# 名字规则：产物文件名去掉扩展名。
+#   rules/mihomo/v2fly-google.mrs  ->  v2fly-google
+#   rules/singbox/v2fly-google.srs ->  v2fly-google
+#
+# 以 # 开头的行与空行会被忽略；名字对 mihomo / sing-box 两侧同时生效。
+#
+# 当前状态：空（即允许清理 main 上已无源文件的全部遗留产物）
