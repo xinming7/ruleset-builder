@@ -89,7 +89,7 @@ jobs:
       fail-fast: false   # 两个内核互不阻塞：一个失败不取消另一个
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Resolve upstream version
         id: ver
@@ -169,7 +169,7 @@ jobs:
       contents: write
       actions: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download results
         uses: actions/download-artifact@v4
