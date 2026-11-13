@@ -2,6 +2,8 @@ name: Publish rulesets
 description: |
   把编译产物提交到 `rules` 孤儿分支：同步分支 README、清理孤儿产物、
   产物与源文件不一致时给出提示，并在推送冲突时重试。
+  每次发布都会把源 commit SHA 写进提交信息，并维护分支根目录的
+  `source-manifest.json`，实现"产物 ← 源 commit"的可追溯绑定。
 
   mihomo / sing-box 两个构建流程共用，避免同一段发布逻辑维护两份。
 
@@ -121,16 +123,39 @@ runs:
           fi
         fi
 
-        # 6. 提交并推送（并发时重试一次 rebase）
+        # 6. 记录"产物 ← 源 commit"绑定，再提交推送
         cd "$RULES"
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add -A "$DIR/" README.md
+
+        # 6a. 更新 source-manifest.json：记录本次由哪个 main commit 编译而来
+        #     mihomo / singbox 两侧各自独立维护，谁发布谁更新自己那一项
+        SRC_SHA="${GITHUB_SHA:-}"
+        if [ -n "$SRC_SHA" ]; then
+          MF="$WORK/source-manifest.json"
+          if [ -f "$RULES/source-manifest.json" ]; then
+            cp "$RULES/source-manifest.json" "$MF"
+          else
+            echo '{}' > "$MF"
+          fi
+          TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq --arg k "$DIR" --arg sha "$SRC_SHA" --arg ts "$TS" \
+            '. + {($k): {source_sha: $sha, updated_at: $ts}}' "$MF" > "$MF.tmp"
+          mv "$MF.tmp" "$MF"
+          cp "$MF" "$RULES/source-manifest.json"
+        else
+          echo "::warning::GITHUB_SHA 为空，本次发布不记录源 commit"
+        fi
+
+        git add -A "$DIR/" README.md source-manifest.json
         if git diff --cached --quiet; then
           echo "产物与 README 均无变化，无需提交"
           exit 0
         fi
-        git commit --quiet -m "$MESSAGE"
+        # 提交信息追加源 commit，便于反查产物对应哪个 main 版本
+        SRC_TAG=""
+        [ -n "$SRC_SHA" ] && SRC_TAG=" (src ${SRC_SHA:0:7})"
+        git commit --quiet -m "${MESSAGE}${SRC_TAG}"
 
         pushed=0
         for attempt in 1 2 3; do
